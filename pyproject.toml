@@ -8,10 +8,13 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "dotenv>=0.9.9",
     "env>=0.1.0",
+    "imageio>=2.37.3",
     "numpy>=2.4.4",
     "openai>=2.31.0",
     "openai-agents>=0.13.6",
+    "opencv-python-headless>=4.13.0.92",
     "pillow>=12.2.0",
     "requests>=2.33.1",
+    "scikit-image>=0.26.0",
     "scipy>=1.17.1",
 ]

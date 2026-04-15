@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "command": [
+    "/Users/quoilam/Documents/cprp/vibeimpl/.venv/bin/python",
+    "/Users/quoilam/Documents/cprp/vibeimpl/output/session_a8e6c90c4c/run_20260415T073108Z_651307a393/algorithms/run_20260415T073108Z_651307a393_图像中心裁剪.py",
+    "--image-path",
+    "/Users/quoilam/Documents/cprp/vibeimpl/output/session_a8e6c90c4c/run_20260415T073108Z_651307a393/inputs/test.jpg",
+    "--output-path",
+    "/Users/quoilam/Documents/cprp/vibeimpl/output/session_a8e6c90c4c/run_20260415T073108Z_651307a393/output/run_20260415T073108Z_651307a393_result.jpg",
+    "--scene-prompt",
+    "帮我把这张图片最中心的50%左右像素的图片提取出来变为一张新图"
+  ],
+  "returncode": 0,
+  "output_image_path": "/Users/quoilam/Documents/cprp/vibeimpl/output/session_a8e6c90c4c/run_20260415T073108Z_651307a393/output/run_20260415T073108Z_651307a393_result.jpg",
+  "stdout": "",
+  "stderr": "",
+  "duration_seconds": 0.17608880996704102,
+  "timed_out": false
+}

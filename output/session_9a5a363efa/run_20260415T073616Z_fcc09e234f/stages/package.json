@@ -1,0 +1,11 @@
+{
+  "name": "package",
+  "status": "succeeded",
+  "started_at": "2026-04-15T07:36:51.619320+00:00",
+  "finished_at": "2026-04-15T07:36:51.620186+00:00",
+  "error_code": null,
+  "message": "manifest written after failure",
+  "artifacts": [
+    "/Users/quoilam/Documents/cprp/vibeimpl/output/session_9a5a363efa/run_20260415T073616Z_fcc09e234f/manifest.json"
+  ]
+}

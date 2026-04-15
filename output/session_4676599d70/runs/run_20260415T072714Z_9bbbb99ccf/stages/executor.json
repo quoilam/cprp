@@ -1,0 +1,9 @@
+{
+  "name": "executor",
+  "status": "succeeded",
+  "started_at": "2026-04-15T07:27:41.169835+00:00",
+  "finished_at": "2026-04-15T07:27:41.262122+00:00",
+  "error_code": null,
+  "message": "execution finished",
+  "artifacts": []
+}

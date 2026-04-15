@@ -1,0 +1,9 @@
+{
+  "name": "research",
+  "status": "running",
+  "started_at": "2026-04-15T07:35:55.276250+00:00",
+  "finished_at": null,
+  "error_code": null,
+  "message": "building candidate methods",
+  "artifacts": []
+}
