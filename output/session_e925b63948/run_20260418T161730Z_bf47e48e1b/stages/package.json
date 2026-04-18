@@ -1,0 +1,11 @@
+{
+  "name": "package",
+  "status": "succeeded",
+  "started_at": "2026-04-18T16:24:30.577903+00:00",
+  "finished_at": "2026-04-18T16:24:30.606217+00:00",
+  "error_code": null,
+  "message": "manifest written",
+  "artifacts": [
+    "D:\\Desktop\\workspace\\cprp\\output\\session_e925b63948\\run_20260418T161730Z_bf47e48e1b\\manifest.json"
+  ]
+}

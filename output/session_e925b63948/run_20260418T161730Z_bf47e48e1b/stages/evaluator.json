@@ -1,0 +1,9 @@
+{
+  "name": "evaluator",
+  "status": "succeeded",
+  "started_at": "2026-04-18T16:24:30.057761+00:00",
+  "finished_at": "2026-04-18T16:24:30.566122+00:00",
+  "error_code": null,
+  "message": "evaluation completed",
+  "artifacts": []
+}

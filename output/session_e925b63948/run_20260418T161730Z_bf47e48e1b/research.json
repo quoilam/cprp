@@ -1,0 +1,69 @@
+{
+  "scene_prompt": "请帮我去除这张图片中的噪点",
+  "candidates": [
+    {
+      "name": "Non-local Means Denoising",
+      "description": "A non-local algorithm that averages similar patches across the image to reduce noise while preserving textures.",
+      "parameters": {
+        "h": 10,
+        "templateWindowSize": 7,
+        "searchWindowSize": 21
+      },
+      "rationale": "Effective for Gaussian noise removal by exploiting self-similarity in images; balances performance and detail preservation.",
+      "sources": [
+        "https://docs.opencv.org/4.x/d1/d79/group__photo__denoise.html#ga21abc1c8b264772b0d601d4ec1e58fc2"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "name": "Bilateral Filter",
+      "description": "A edge-preserving smoothing filter that combines domain and range kernels to reduce noise.",
+      "parameters": {
+        "d": 9,
+        "sigmaColor": 75,
+        "sigmaSpace": 75
+      },
+      "rationale": "Good for preserving edges while smoothing noise; suitable for images with clear structural details.",
+      "sources": [
+        "https://docs.opencv.org/4.x/d4/d13/tutorial_py_filtering.html"
+      ],
+      "confidence": 0.75
+    },
+    {
+      "name": "Fast Non-local Means Denoising (OpenCV)",
+      "description": "An optimized version of non-local means using approximation techniques for faster execution.",
+      "parameters": {
+        "h": 10,
+        "templateWindowSize": 7,
+        "searchWindowSize": 21
+      },
+      "rationale": "Provides near-similar quality to standard non-local means with significantly reduced computation time.",
+      "sources": [
+        "https://docs.opencv.org/4.x/d5/dff/tutorial_py_non_local_means.html"
+      ],
+      "confidence": 0.88
+    },
+    {
+      "name": "Gaussian Blur",
+      "description": "A linear filter that convolves the image with a Gaussian kernel to smooth noise.",
+      "parameters": {
+        "kernelSize": [
+          5,
+          5
+        ],
+        "sigmaX": 1.5
+      },
+      "rationale": "Simple and fast; effective for reducing high-frequency noise but may blur edges.",
+      "sources": [
+        "https://docs.opencv.org/4.x/d4/d13/tutorial_py_filtering.html"
+      ],
+      "confidence": 0.65
+    }
+  ],
+  "chosen_strategy": "Fast Non-local Means Denoising (OpenCV)",
+  "summary": "Given the task of removing noise without significant loss of detail, Fast Non-local Means Denoising offers a strong balance of effectiveness and efficiency. It leverages patch-based similarity with optimized computation, making it suitable for general-purpose noise removal.",
+  "sources": [
+    "https://docs.opencv.org/4.x/d5/dff/tutorial_py_non_local_means.html",
+    "https://docs.opencv.org/4.x/d1/d79/group__photo__denoise.html#ga21abc1c8b264772b0d601d4ec1e58fc2"
+  ]
+}

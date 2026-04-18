@@ -17,7 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("--algorithms-root", default=None, help="Optional external directory for generated algorithm files")
     parser.add_argument("--timeout-seconds", type=int, default=180, help="Execution timeout in seconds")
     parser.add_argument("--max-memory-mb", type=int, default=None, help="Optional memory limit for the executor")
-    parser.add_argument("--optimizer-module", default=None, help="Optional optimizer module name")
+    parser.add_argument("--optimizer-module", default="optimizers.autoresearch", help="Optional optimizer module name")
     parser.add_argument("--optimizer-function", default="optimize", help="Optimizer function name")
     parser.add_argument("--continue-on-optimizer-failure", action="store_true", help="Continue when optimization fails")
     args = parser.parse_args()

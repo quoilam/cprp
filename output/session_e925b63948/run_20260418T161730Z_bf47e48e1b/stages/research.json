@@ -1,0 +1,9 @@
+{
+  "name": "research",
+  "status": "succeeded",
+  "started_at": "2026-04-18T16:17:32.422302+00:00",
+  "finished_at": "2026-04-18T16:17:41.626500+00:00",
+  "error_code": null,
+  "message": "research completed",
+  "artifacts": []
+}

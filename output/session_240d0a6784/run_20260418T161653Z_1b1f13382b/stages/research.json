@@ -1,0 +1,9 @@
+{
+  "name": "research",
+  "status": "failed",
+  "started_at": "2026-04-18T16:16:55.994550+00:00",
+  "finished_at": "2026-04-18T16:16:56.000548+00:00",
+  "error_code": "RuntimeError",
+  "message": "OPENROUTER_API_KEY is required for research/codegen.",
+  "artifacts": []
+}
