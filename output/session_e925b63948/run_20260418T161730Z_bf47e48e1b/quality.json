@@ -1,7 +1,0 @@
-{
-  "psnr": 39.840353253602515,
-  "ssim": 0.9690227508544922,
-  "latency_seconds": 0.7276160717010498,
-  "score": 0.9869964235617016,
-  "notes": "Higher score indicates better balance of quality and speed."
-}
