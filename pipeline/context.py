@@ -105,11 +105,14 @@ class PipelineContext:
     def create(cls, request: PipelineRequest) -> "PipelineContext":
         session_id = request.config.session_id or make_session_id()
         run_id = make_run_id(request.scene_prompt)
-        paths = PipelinePaths.create(request.config.output_root, session_id, run_id)
-        context = cls(request=request, session_id=session_id, run_id=run_id, paths=paths)
+        paths = PipelinePaths.create(
+            request.config.output_root, session_id, run_id)
+        context = cls(request=request, session_id=session_id,
+                      run_id=run_id, paths=paths)
         context.metadata["created_at"] = _utc_now()
         context.metadata["session_id"] = session_id
-        context.log_event("pipeline", "created", {"session_id": session_id, "run_id": run_id})
+        context.log_event("pipeline", "created", {
+                          "session_id": session_id, "run_id": run_id})
         return context
 
     def _to_json_safe(self, value: Any) -> Any:
@@ -134,7 +137,8 @@ class PipelineContext:
         self.paths.events_log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.paths.events_log_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
-        print(f"[{category}] {event}: {json.dumps(record['payload'], ensure_ascii=False)}")
+        print(
+            f"[{category}] {event}: {json.dumps(record['payload'], ensure_ascii=False)}")
         return self.paths.events_log_path
 
     def ensure_stage_record(self, stage_name: StageName) -> StageRecord:
@@ -150,7 +154,8 @@ class PipelineContext:
         record.started_at = _utc_now()
         record.message = message
         self.write_stage_record(stage_name)
-        self.log_event("stage", "start", {"stage": stage_name.value, "message": message})
+        self.log_event("stage", "start", {
+                       "stage": stage_name.value, "message": message})
         return record
 
     def finish_stage(
@@ -185,7 +190,8 @@ class PipelineContext:
     def write_stage_record(self, stage_name: StageName) -> Path:
         record = self.ensure_stage_record(stage_name)
         stage_path = self.paths.stages_dir / f"{stage_name.value}.json"
-        stage_path.write_text(json.dumps(record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        stage_path.write_text(json.dumps(
+            record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         return stage_path
 
     def copy_input_image(self) -> Path:
@@ -195,11 +201,14 @@ class PipelineContext:
         destination = self.paths.inputs_dir / source.name
         shutil.copy2(source, destination)
         self.artifacts["input_image"] = destination
-        self.log_event("artifact", "copied_input", {"source": source, "destination": destination})
+        self.log_event("artifact", "copied_input", {
+                       "source": source, "destination": destination})
         return destination
 
     def write_json(self, relative_name: str, payload: dict[str, Any]) -> Path:
         destination = self.paths.run_dir / relative_name
-        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.log_event("artifact", "write_json", {"path": destination, "name": relative_name})
+        destination.write_text(json.dumps(
+            payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.log_event("artifact", "write_json", {
+                       "path": destination, "name": relative_name})
         return destination
