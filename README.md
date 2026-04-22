@@ -26,7 +26,7 @@ output/
 散落到顶层目录；仅当显式传入 `--algorithms-root` 时才写到外部路径。
 
 ## 当前阶段
-csve
+csveg
 已完成最小闭环骨架：
 
 1. 单入口 CLI。
