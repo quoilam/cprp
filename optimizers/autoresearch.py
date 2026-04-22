@@ -15,7 +15,7 @@ def start_experiment(train_file_path: str, scenario_description: str, user_image
     backup_md_path = os.path.join(data_dir, "program.md.bak")
 
     if not os.path.exists(program_md_path):
-        print("Error: 未找到 program.md 文件！")
+        print("Error:  未找到 program.md 文件！")
         return None
 
     with open(program_md_path, "r", encoding="utf-8") as f:
