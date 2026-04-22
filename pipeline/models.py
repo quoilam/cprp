@@ -37,7 +37,8 @@ class PipelineConfig:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["output_root"] = str(self.output_root)
-        data["algorithms_root"] = str(self.algorithms_root) if self.algorithms_root else None
+        data["algorithms_root"] = str(
+            self.algorithms_root) if self.algorithms_root else None
         return data
 
 
