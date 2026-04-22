@@ -36,32 +36,6 @@ def _normalize_text(text: str) -> str:
     return " ".join(text.lower().strip().split())
 
 
-def _choose_strategy(scene_prompt: str) -> tuple[str, dict[str, Any], str]:
-    normalized = _normalize_text(scene_prompt)
-    crop_intent = any(keyword in normalized for keyword in ["crop", "center crop", "裁切", "裁剪", "居中", "中心", "提取"])
-    if crop_intent:
-        crop_ratio = 0.5
-        if any(keyword in normalized for keyword in ["30%", "0.3", "三成"]):
-            crop_ratio = 0.3
-        elif any(keyword in normalized for keyword in ["40%", "0.4", "四成"]):
-            crop_ratio = 0.4
-        elif any(keyword in normalized for keyword in ["50%", "0.5", "一半", "半", "half"]):
-            crop_ratio = 0.5
-        elif any(keyword in normalized for keyword in ["60%", "0.6", "六成"]):
-            crop_ratio = 0.6
-        elif any(keyword in normalized for keyword in ["70%", "0.7", "七成"]):
-            crop_ratio = 0.7
-        return "center_crop", {"crop_ratio": crop_ratio}, "Prompt suggests center crop extraction"
-    if any(keyword in normalized for keyword in ["denoise", "noise", "去噪"]):
-        return "denoise_conservative", {"filter_size": 3, "contrast": 1.03}, "Prompt suggests noise reduction"
-    if any(keyword in normalized for keyword in ["deblur", "blur", "去模糊"]):
-        return "deblur_sharpen", {"sharpness": 1.35, "detail": 1.08}, "Prompt suggests blur correction"
-    if any(keyword in normalized for keyword in ["super-resolution", "upscale", "放大", "超分"]):
-        return "upscale_refine", {"scale": 2, "sharpness": 1.1}, "Prompt suggests upscaling"
-    if any(keyword in normalized for keyword in ["enhance", "contrast", "clear", "增强", "清晰"]):
-        return "enhance_contrast", {"contrast": 1.15, "sharpness": 1.08}, "Prompt suggests global enhancement"
-    return "balanced_enhancement", {"contrast": 1.08, "sharpness": 1.05}, "Default balanced image enhancement"
-
 
 def _extract_json_object(text: str) -> dict[str, Any]:
     text = text.strip()
@@ -90,24 +64,28 @@ def _extract_python_code(text: str) -> str:
 
 
 def _safe_filename_fragment(value: str) -> str:
-    cleaned = re.sub(r"[^\w\-\u4e00-\u9fff]+", "_", value, flags=re.UNICODE).strip("_")
+    cleaned = re.sub(r"[^\w\-\u4e00-\u9fff]+", "_",
+                     value, flags=re.UNICODE).strip("_")
     return cleaned or "generated_algorithm"
 
 
 def _create_openrouter_client() -> tuple[OpenAI, str]:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is required for research/codegen.")
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is required for research/codegen.")
     base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     model = os.getenv("OPENROUTER_MODEL")
     if not model:
-        raise RuntimeError("OPENROUTER_MODEL is required for research/codegen.")
+        raise RuntimeError(
+            "OPENROUTER_MODEL is required for research/codegen.")
     return OpenAI(api_key=api_key, base_url=base_url), model
 
 
 def _call_openrouter_json(context: PipelineContext, prompt: str) -> dict[str, Any]:
     start_time = time.time()
-    context.log_event("tool_call", "openrouter_json_start", {"prompt_preview": prompt[:240]})
+    context.log_event("tool_call", "openrouter_json_start",
+                      {"prompt_preview": prompt[:240]})
     client, model = _create_openrouter_client()
     completion = client.chat.completions.create(
         model=model,
@@ -119,13 +97,15 @@ def _call_openrouter_json(context: PipelineContext, prompt: str) -> dict[str, An
     )
     content = completion.choices[0].message.content or ""
     duration = time.time() - start_time
-    context.log_event("tool_call", "openrouter_json_finish", {"model": model, "duration_seconds": duration, "response_preview": content[:240]})
+    context.log_event("tool_call", "openrouter_json_finish", {
+                      "model": model, "duration_seconds": duration, "response_preview": content[:240]})
     return _extract_json_object(content)
 
 
 def _call_openrouter_code(context: PipelineContext, prompt: str) -> str:
     start_time = time.time()
-    context.log_event("tool_call", "openrouter_code_start", {"prompt_preview": prompt[:240]})
+    context.log_event("tool_call", "openrouter_code_start",
+                      {"prompt_preview": prompt[:240]})
     client, model = _create_openrouter_client()
     completion = client.chat.completions.create(
         model=model,
@@ -137,17 +117,20 @@ def _call_openrouter_code(context: PipelineContext, prompt: str) -> str:
     )
     content = completion.choices[0].message.content or ""
     duration = time.time() - start_time
-    context.log_event("tool_call", "openrouter_code_finish", {"model": model, "duration_seconds": duration, "response_preview": content[:240]})
+    context.log_event("tool_call", "openrouter_code_finish", {
+                      "model": model, "duration_seconds": duration, "response_preview": content[:240]})
     return _extract_python_code(content)
 
 
 def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[str, str]]:
     tavily_api_key = os.getenv("TAVILY_API_KEY")
     if not tavily_api_key:
-        context.log_event("tool_call", "tavily_skip", {"reason": "TAVILY_API_KEY missing"})
+        context.log_event("tool_call", "tavily_skip", {
+                          "reason": "TAVILY_API_KEY missing"})
         return []
     start_time = time.time()
-    context.log_event("tool_call", "tavily_start", {"query": f"image processing algorithm for: {scene_prompt}"})
+    context.log_event("tool_call", "tavily_start", {
+                      "query": f"image processing algorithm for: {scene_prompt}"})
     try:
         response = requests.post(
             "https://api.tavily.com/search",
@@ -174,10 +157,12 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
                     "content": str(item.get("content") or "")[:500],
                 }
             )
-        context.log_event("tool_call", "tavily_finish", {"duration_seconds": time.time() - start_time, "result_count": len(clues)})
+        context.log_event("tool_call", "tavily_finish", {
+                          "duration_seconds": time.time() - start_time, "result_count": len(clues)})
         return clues
     except Exception as exc:
-        context.log_event("tool_call", "tavily_error", {"duration_seconds": time.time() - start_time, "error": str(exc)})
+        context.log_event("tool_call", "tavily_error", {
+                          "duration_seconds": time.time() - start_time, "error": str(exc)})
         return []
 
 
@@ -200,12 +185,15 @@ def _validate_run_signature(source: str) -> None:
             arg_names = [arg.arg for arg in node.args.args]
             if arg_names[:3] == ["image_path", "output_path", "scene_prompt"]:
                 return
-            raise ValueError("run() must have arguments (image_path, output_path, scene_prompt).")
-    raise ValueError("Generated algorithm is missing run(image_path, output_path, scene_prompt).")
+            raise ValueError(
+                "run() must have arguments (image_path, output_path, scene_prompt).")
+    raise ValueError(
+        "Generated algorithm is missing run(image_path, output_path, scene_prompt).")
 
 
 def _validate_allowed_imports(source: str) -> None:
-    allowed_third_party = {"numpy", "PIL", "scipy", "cv2", "skimage", "imageio"}
+    allowed_third_party = {"numpy", "PIL",
+                           "scipy", "cv2", "skimage", "imageio"}
     stdlib_roots = set(getattr(sys, "stdlib_module_names", set()))
     tree = ast.parse(source)
     for node in ast.walk(tree):
@@ -215,9 +203,11 @@ def _validate_allowed_imports(source: str) -> None:
                 if root in stdlib_roots:
                     continue
                 if root not in allowed_third_party:
-                    raise ValueError(f"Disallowed third-party import: {alias.name}")
+                    raise ValueError(
+                        f"Disallowed third-party import: {alias.name}")
                 if importlib.util.find_spec(root) is None:
-                    raise ValueError(f"Unavailable import in environment: {alias.name}")
+                    raise ValueError(
+                        f"Unavailable import in environment: {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             if node.module is None:
                 continue
@@ -225,9 +215,11 @@ def _validate_allowed_imports(source: str) -> None:
             if root in stdlib_roots:
                 continue
             if root not in allowed_third_party:
-                raise ValueError(f"Disallowed third-party import: {node.module}")
+                raise ValueError(
+                    f"Disallowed third-party import: {node.module}")
             if importlib.util.find_spec(root) is None:
-                raise ValueError(f"Unavailable import in environment: {node.module}")
+                raise ValueError(
+                    f"Unavailable import in environment: {node.module}")
 
 
 def _verify_generated_algorithm_contract(
@@ -252,15 +244,20 @@ def _verify_generated_algorithm_contract(
         "--scene-prompt",
         scene_prompt,
     ]
-    context.log_event("tool_call", "contract_verify_start", {"algorithm_path": algorithm_path, "verify_output": verify_output_path})
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    context.log_event("tool_call", "contract_verify_start", {
+                      "algorithm_path": algorithm_path, "verify_output": verify_output_path})
+    completed = subprocess.run(
+        command, capture_output=True, text=True, timeout=60)
     if completed.returncode != 0:
-        context.log_event("tool_call", "contract_verify_fail", {"returncode": completed.returncode, "stderr": completed.stderr[:500]})
+        context.log_event("tool_call", "contract_verify_fail", {
+                          "returncode": completed.returncode, "stderr": completed.stderr[:500]})
         return False, f"returncode={completed.returncode}, stderr={completed.stderr.strip()}"
     if not verify_output_path.exists():
-        context.log_event("tool_call", "contract_verify_fail", {"reason": "output file missing"})
+        context.log_event("tool_call", "contract_verify_fail", {
+                          "reason": "output file missing"})
         return False, "script exited 0 but did not create output_path"
-    context.log_event("tool_call", "contract_verify_success", {"output": verify_output_path})
+    context.log_event("tool_call", "contract_verify_success",
+                      {"output": verify_output_path})
     return True, "ok"
 
 
@@ -283,20 +280,25 @@ def research_stage(context: PipelineContext) -> ResearchResult:
             CandidateMethod(
                 name=str(item.get("name") or "unknown_method"),
                 description=str(item.get("description") or ""),
-                parameters=item.get("parameters") if isinstance(item.get("parameters"), dict) else {},
+                parameters=item.get("parameters") if isinstance(
+                    item.get("parameters"), dict) else {},
                 rationale=str(item.get("rationale") or ""),
-                sources=[str(source) for source in (item.get("sources") or []) if str(source).strip()],
+                sources=[str(source) for source in (
+                    item.get("sources") or []) if str(source).strip()],
                 confidence=float(item.get("confidence") or 0.0),
             )
         )
     if not candidates:
-        raise ValueError("Research response candidates are empty after parsing.")
+        raise ValueError(
+            "Research response candidates are empty after parsing.")
 
     chosen_strategy = str(payload.get("chosen_strategy") or candidates[0].name)
     summary = str(payload.get("summary") or f"Selected {chosen_strategy}")
-    sources = [str(source) for source in (payload.get("sources") or []) if str(source).strip()]
+    sources = [str(source) for source in (
+        payload.get("sources") or []) if str(source).strip()]
     if not sources and web_clues:
-        sources = [clue.get("url", "") for clue in web_clues if clue.get("url")]
+        sources = [clue.get("url", "")
+                   for clue in web_clues if clue.get("url")]
 
     result = ResearchResult(
         scene_prompt=context.request.scene_prompt,
@@ -312,8 +314,10 @@ def research_stage(context: PipelineContext) -> ResearchResult:
 
 def _generate_algorithm_source(research_result: ResearchResult) -> str:
     strategy = research_result.chosen_strategy
-    parameters = research_result.candidates[0].parameters if research_result.candidates else {}
-    serialized_parameters = json.dumps(parameters, ensure_ascii=False, indent=4)
+    parameters = research_result.candidates[0].parameters if research_result.candidates else {
+    }
+    serialized_parameters = json.dumps(
+        parameters, ensure_ascii=False, indent=4)
     return f"""from __future__ import annotations
 
 import argparse
@@ -390,9 +394,11 @@ def _validate_python_source(source: str) -> None:
 def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> GeneratedAlgorithmArtifact:
     algo_dir = context.request.config.algorithms_root or context.paths.generated_algorithms_dir
     algo_dir.mkdir(parents=True, exist_ok=True)
-    strategy_fragment = _safe_filename_fragment(research_result.chosen_strategy)
+    strategy_fragment = _safe_filename_fragment(
+        research_result.chosen_strategy)
     algorithm_path = algo_dir / f"{context.run_id}_{strategy_fragment}.py"
-    research_summary = json.dumps(research_result.to_dict(), ensure_ascii=False, indent=2)
+    research_summary = json.dumps(
+        research_result.to_dict(), ensure_ascii=False, indent=2)
     prompt = CODEGEN_PROMPT_TEMPLATE.format(research_summary=research_summary)
     source = ""
     last_error = ""
@@ -427,7 +433,8 @@ def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> 
             f"```python\n{source}\n```"
         )
     else:
-        raise RuntimeError(f"Generated algorithm failed contract verification: {last_error}")
+        raise RuntimeError(
+            f"Generated algorithm failed contract verification: {last_error}")
 
     source_hash = sha256(source.encode("utf-8")).hexdigest()
     artifact = GeneratedAlgorithmArtifact(
@@ -450,7 +457,8 @@ class OptimizerAdapter:
         if not module_name:
             return
 
-        module = __import__(module_name, fromlist=[self.config.optimizer_function])
+        module = __import__(module_name, fromlist=[
+                            self.config.optimizer_function])
         optimizer_function = getattr(module, self.config.optimizer_function)
         optimizer_function(
             algo_file_path=algo_file_path,
@@ -462,7 +470,8 @@ class OptimizerAdapter:
 def optimize_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgorithmArtifact) -> tuple[bool, str]:
     before_text = algorithm_artifact.path.read_text(encoding="utf-8")
     before_hash = sha256(before_text.encode("utf-8")).hexdigest()
-    context.log_event("tool_call", "optimizer_start", {"algorithm_path": algorithm_artifact.path})
+    context.log_event("tool_call", "optimizer_start", {
+                      "algorithm_path": algorithm_artifact.path})
     adapter = OptimizerAdapter(context.request.config)
     adapter.optimize(
         algo_file_path=str(algorithm_artifact.path),
@@ -473,17 +482,20 @@ def optimize_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgori
     after_hash = sha256(after_text.encode("utf-8")).hexdigest()
     if before_hash != after_hash:
         _validate_python_source(after_text)
-        snapshot_path = context.paths.artifacts_dir / f"{algorithm_artifact.path.stem}.optimized.py"
+        snapshot_path = context.paths.artifacts_dir / \
+            f"{algorithm_artifact.path.stem}.optimized.py"
         shutil.copy2(algorithm_artifact.path, snapshot_path)
         context.artifacts["algorithm_optimized"] = snapshot_path
-        context.log_event("tool_call", "optimizer_finish", {"changed": True, "snapshot_path": snapshot_path})
+        context.log_event("tool_call", "optimizer_finish", {
+                          "changed": True, "snapshot_path": snapshot_path})
         return True, "optimizer modified algorithm file in place"
     context.log_event("tool_call", "optimizer_finish", {"changed": False})
     return True, "optimizer completed without changing the algorithm file"
 
 
 def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgorithmArtifact) -> ExecutionResult:
-    output_image_path = context.paths.output_dir / f"{context.run_id}_result{context.request.image_path.suffix or '.png'}"
+    output_image_path = context.paths.output_dir / \
+        f"{context.run_id}_result{context.request.image_path.suffix or '.png'}"
     command = [
         sys.executable,
         str(algorithm_artifact.path.resolve()),
@@ -495,7 +507,8 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
         context.request.scene_prompt,
     ]
     start_time = time.time()
-    context.log_event("tool_call", "executor_subprocess_start", {"command": command})
+    context.log_event("tool_call", "executor_subprocess_start", {
+                      "command": command})
 
     def _limit_resources() -> None:
         try:
@@ -503,7 +516,8 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
 
             if context.request.config.max_memory_mb:
                 bytes_limit = context.request.config.max_memory_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
+                resource.setrlimit(resource.RLIMIT_AS,
+                                   (bytes_limit, bytes_limit))
         except Exception:
             return
 
@@ -529,7 +543,8 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
             timed_out=False,
         )
         context.write_json("execution.json", result.to_dict())
-        context.log_event("tool_call", "executor_subprocess_finish", {"duration_seconds": duration, "returncode": completed.returncode, "success": success})
+        context.log_event("tool_call", "executor_subprocess_finish", {
+                          "duration_seconds": duration, "returncode": completed.returncode, "success": success})
         return result
     except subprocess.TimeoutExpired as exc:
         duration = time.time() - start_time
@@ -544,7 +559,8 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
             timed_out=True,
         )
         context.write_json("execution.json", result.to_dict())
-        context.log_event("tool_call", "executor_subprocess_timeout", {"duration_seconds": duration})
+        context.log_event("tool_call", "executor_subprocess_timeout", {
+                          "duration_seconds": duration})
         return result
 
 
@@ -574,9 +590,12 @@ def _ssim(reference: np.ndarray, candidate: np.ndarray) -> float:
     mu_x_sq = mu_x * mu_x
     mu_y_sq = mu_y * mu_y
     mu_xy = mu_x * mu_y
-    sigma_x_sq = gaussian_filter(reference_gray * reference_gray, sigma=1.5) - mu_x_sq
-    sigma_y_sq = gaussian_filter(candidate_gray * candidate_gray, sigma=1.5) - mu_y_sq
-    sigma_xy = gaussian_filter(reference_gray * candidate_gray, sigma=1.5) - mu_xy
+    sigma_x_sq = gaussian_filter(
+        reference_gray * reference_gray, sigma=1.5) - mu_x_sq
+    sigma_y_sq = gaussian_filter(
+        candidate_gray * candidate_gray, sigma=1.5) - mu_y_sq
+    sigma_xy = gaussian_filter(
+        reference_gray * candidate_gray, sigma=1.5) - mu_xy
     numerator = (2.0 * mu_xy + c1) * (2.0 * sigma_xy + c2)
     denominator = (mu_x_sq + mu_y_sq + c1) * (sigma_x_sq + sigma_y_sq + c2)
     score = np.mean(numerator / (denominator + 1e-8))
@@ -592,9 +611,11 @@ def evaluate_stage(context: PipelineContext, execution_result: ExecutionResult) 
     candidate_array = _to_array(candidate_image, reference_image.size)
     psnr_value = _psnr(reference_array, candidate_array)
     ssim_value = _ssim(reference_array, candidate_array)
-    latency_score = max(0.0, 1.0 - (execution_result.duration_seconds / max(context.request.config.timeout_seconds, 1)))
+    latency_score = max(0.0, 1.0 - (execution_result.duration_seconds /
+                        max(context.request.config.timeout_seconds, 1)))
     normalized_psnr = min(psnr_value / 40.0, 1.0)
-    score = float(np.mean([normalized_psnr, max(0.0, ssim_value), latency_score]))
+    score = float(
+        np.mean([normalized_psnr, max(0.0, ssim_value), latency_score]))
     report = QualityReport(
         psnr=psnr_value,
         ssim=ssim_value,
@@ -608,5 +629,6 @@ def evaluate_stage(context: PipelineContext, execution_result: ExecutionResult) 
 
 def package_stage(context: PipelineContext, payload: dict[str, Any]) -> Path:
     manifest_path = context.paths.manifest_path
-    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path.write_text(json.dumps(
+        payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest_path

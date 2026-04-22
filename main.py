@@ -9,6 +9,7 @@ from pipeline import PipelineConfig, PipelineRequest, PipelineRunner
 
 if __name__ == "__main__":
     load_dotenv()
+
     parser = argparse.ArgumentParser(description="Image algorithm automation pipeline")
     parser.add_argument("--image-path", required=True, help="Path to the input image")
     parser.add_argument("--scene-prompt", required=True, help="Scene prompt describing the target task")
@@ -20,6 +21,7 @@ if __name__ == "__main__":
     parser.add_argument("--optimizer-module", default="optimizers.autoresearch", help="Optional optimizer module name")
     parser.add_argument("--optimizer-function", default="optimize", help="Optimizer function name")
     parser.add_argument("--continue-on-optimizer-failure", action="store_true", help="Continue when optimization fails")
+
     args = parser.parse_args()
 
     request = PipelineRequest(
@@ -27,7 +29,8 @@ if __name__ == "__main__":
         scene_prompt=args.scene_prompt,
         config=PipelineConfig(
             output_root=Path(args.output_root),
-            algorithms_root=Path(args.algorithms_root) if args.algorithms_root else None,
+            algorithms_root=Path(
+                args.algorithms_root) if args.algorithms_root else None,
             session_id=args.session_id,
             timeout_seconds=args.timeout_seconds,
             optimizer_module=args.optimizer_module,
