@@ -18,10 +18,14 @@ RESEARCH_PROMPT_TEMPLATE = """
 {web_context}
 
 要求:
-1. 结合外部线索，输出候选方法列表。
-2. 每个候选包含方法名、参数建议、理由、来源链接、置信度。
+1. 结合外部线索，同时研究两类事实:
+   - 图像处理算法实现思路
+   - 效果评价指标与评价方案
+2. 输出候选方法列表。
+3. 每个候选包含方法名、参数建议、理由、来源链接、置信度。
 3. 明确指出最终推荐方法。
-4. 输出必须是 JSON 对象，字段固定为:
+4. 输出评价方案，至少包含 metrics 列表与 evaluation_plan。
+5. 输出必须是 JSON 对象，字段固定为:
 	 {{
 		 "candidates": [
 			 {{
@@ -34,10 +38,13 @@ RESEARCH_PROMPT_TEMPLATE = """
 			 }}
 		 ],
 		 "chosen_strategy": "string",
+		 "evaluation_metrics": ["string"],
+		 "evaluation_plan": "string",
 		 "summary": "string",
 		 "sources": ["url"]
 	 }}
-5. 不要输出任何 JSON 之外的内容。
+6. 若外部线索不足，也要给出可执行的默认评价方案。
+7. 不要输出任何 JSON 之外的内容。
 """.strip()
 
 
@@ -46,6 +53,9 @@ CODEGEN_PROMPT_TEMPLATE = """
 
 研究结果:
 {research_summary}
+
+外部检索线索:
+{web_context}
 
 要求:
 1. 只输出单个 Python 文件内容，不要输出解释文字。
@@ -56,5 +66,31 @@ CODEGEN_PROMPT_TEMPLATE = """
 """.strip()
 
 
-OPTIMIZER_PROTOCOL = "optimize(algo_file_path: str, user_prompt: str, user_image_file_path: str) -> None"
+PREPARE_CODEGEN_PROMPT_TEMPLATE = """
+请根据以下研究结果与外部线索，生成用于图像结果评价的 prepare.py。
 
+研究结果:
+{research_summary}
+
+外部检索线索:
+{web_context}
+
+要求:
+1. 只输出单个 Python 文件内容，不要输出解释文字。
+2. 仅允许使用标准库 + Pillow + numpy + scipy + cv2 + skimage + imageio。
+3. 文件中必须提供一个函数:
+	evaluate(input_image_path: str, output_image_path: str) -> dict
+4. evaluate 返回的 dict 必须至少包含:
+	- primary_metric_name: str
+	- primary_metric_value: float
+	- metrics: dict[str, float]
+	- higher_is_better: bool
+5. 指标和实现要与 research_result.evaluation_metrics / evaluation_plan 一致。
+6. 代码应稳健处理不同尺寸图像（必要时对齐尺寸），并避免抛出难以理解的异常。
+""".strip()
+
+
+OPTIMIZER_PROTOCOL = (
+    "optimize(algo_file_path: str, user_prompt: str, user_image_file_path: str, "
+    "prepare_file_path: str | None = None) -> None"
+)

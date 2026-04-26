@@ -4,6 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 import ast
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -19,7 +20,12 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from scipy.ndimage import gaussian_filter
 from openai import OpenAI
 
-from prompts import CODEGEN_PROMPT_TEMPLATE, PIPELINE_SYSTEM_PROMPT, RESEARCH_PROMPT_TEMPLATE
+from prompts import (
+    CODEGEN_PROMPT_TEMPLATE,
+    PIPELINE_SYSTEM_PROMPT,
+    PREPARE_CODEGEN_PROMPT_TEMPLATE,
+    RESEARCH_PROMPT_TEMPLATE,
+)
 
 from .context import PipelineContext
 from .models import (
@@ -43,6 +49,33 @@ from .resilience import (
 def _normalize_text(text: str) -> str:
     return " ".join(text.lower().strip().split())
 
+
+def _choose_strategy(scene_prompt: str) -> tuple[str, dict[str, Any], str]:
+    normalized = _normalize_text(scene_prompt)
+    crop_intent = any(keyword in normalized for keyword in [
+                      "crop", "center crop", "裁切", "裁剪", "居中", "中心", "提取"])
+    if crop_intent:
+        crop_ratio = 0.5
+        if any(keyword in normalized for keyword in ["30%", "0.3", "三成"]):
+            crop_ratio = 0.3
+        elif any(keyword in normalized for keyword in ["40%", "0.4", "四成"]):
+            crop_ratio = 0.4
+        elif any(keyword in normalized for keyword in ["50%", "0.5", "一半", "半", "half"]):
+            crop_ratio = 0.5
+        elif any(keyword in normalized for keyword in ["60%", "0.6", "六成"]):
+            crop_ratio = 0.6
+        elif any(keyword in normalized for keyword in ["70%", "0.7", "七成"]):
+            crop_ratio = 0.7
+        return "center_crop", {"crop_ratio": crop_ratio}, "Prompt suggests center crop extraction"
+    if any(keyword in normalized for keyword in ["denoise", "noise", "去噪"]):
+        return "denoise_conservative", {"filter_size": 3, "contrast": 1.03}, "Prompt suggests noise reduction"
+    if any(keyword in normalized for keyword in ["deblur", "blur", "去模糊"]):
+        return "deblur_sharpen", {"sharpness": 1.35, "detail": 1.08}, "Prompt suggests blur correction"
+    if any(keyword in normalized for keyword in ["super-resolution", "upscale", "放大", "超分"]):
+        return "upscale_refine", {"scale": 2, "sharpness": 1.1}, "Prompt suggests upscaling"
+    if any(keyword in normalized for keyword in ["enhance", "contrast", "clear", "增强", "清晰"]):
+        return "enhance_contrast", {"contrast": 1.15, "sharpness": 1.08}, "Prompt suggests global enhancement"
+    return "balanced_enhancement", {"contrast": 1.08, "sharpness": 1.05}, "Default balanced image enhancement"
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -182,6 +215,22 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
         context.log_event("tool_call", "tavily_skip", {
                           "reason": "TAVILY_API_KEY missing"})
         return []
+    query_plan = [
+        (
+            "algorithm",
+            (
+                "image processing implementation methods for scene: "
+                f"{scene_prompt}. focus on practical algorithm steps and parameter choices"
+            ),
+        ),
+        (
+            "evaluation",
+            (
+                "image processing quality evaluation metrics for scene: "
+                f"{scene_prompt}. focus on objective metrics and scoring protocol"
+            ),
+        ),
+    ]
     start_time = time.time()
     policy = build_retry_policy_from_config(context.request.config, kind="http")
     http_timeout = float(context.request.config.http_timeout_seconds)
@@ -261,6 +310,11 @@ def _format_web_context(clues: list[dict[str, str]]) -> str:
         return "(no external web clues available)"
     lines: list[str] = []
     for idx, clue in enumerate(clues, 1):
+        topic = str(clue.get("topic") or "general").strip()
+        query = str(clue.get("query") or "").strip()
+        lines.append(f"Topic: {topic}")
+        if query:
+            lines.append(f"Query: {query}")
         lines.append(f"[{idx}] {clue.get('title', '').strip()}")
         lines.append(f"URL: {clue.get('url', '').strip()}")
         lines.append(f"Summary: {clue.get('content', '').strip()}")
@@ -397,6 +451,12 @@ def research_stage(context: PipelineContext) -> ResearchResult:
         raise BusinessLogicError(json.dumps(detail, ensure_ascii=False))
 
     chosen_strategy = str(payload.get("chosen_strategy") or candidates[0].name)
+    evaluation_metrics = [str(metric).strip() for metric in (
+        payload.get("evaluation_metrics") or []) if str(metric).strip()]
+    if not evaluation_metrics:
+        evaluation_metrics = ["psnr", "ssim", "latency"]
+    evaluation_plan = str(payload.get(
+        "evaluation_plan") or "Compute objective metrics on input/output pair and aggregate score.")
     summary = str(payload.get("summary") or f"Selected {chosen_strategy}")
     sources = [str(source) for source in (
         payload.get("sources") or []) if str(source).strip()]
@@ -408,6 +468,8 @@ def research_stage(context: PipelineContext) -> ResearchResult:
         scene_prompt=context.request.scene_prompt,
         candidates=candidates,
         chosen_strategy=chosen_strategy,
+        evaluation_metrics=evaluation_metrics,
+        evaluation_plan=evaluation_plan,
         summary=summary,
         sources=sources,
     )
@@ -495,15 +557,37 @@ def _validate_python_source(source: str) -> None:
     ast.parse(source)
 
 
+def _validate_prepare_signature(source: str) -> None:
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "evaluate":
+            arg_names = [arg.arg for arg in node.args.args]
+            if arg_names[:2] == ["input_image_path", "output_image_path"]:
+                return
+            raise ValueError(
+                "prepare.py evaluate() must have arguments (input_image_path, output_image_path).")
+    raise ValueError(
+        "Generated prepare.py is missing evaluate(input_image_path, output_image_path).")
+
+
 def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> GeneratedAlgorithmArtifact:
     algo_dir = context.request.config.algorithms_root or context.paths.generated_algorithms_dir
     algo_dir.mkdir(parents=True, exist_ok=True)
     strategy_fragment = _safe_filename_fragment(
         research_result.chosen_strategy)
     algorithm_path = algo_dir / f"{context.run_id}_{strategy_fragment}.py"
+    prepare_path = algo_dir / \
+        f"{context.run_id}_{strategy_fragment}.prepare.py"
     research_summary = json.dumps(
         research_result.to_dict(), ensure_ascii=False, indent=2)
-    prompt = CODEGEN_PROMPT_TEMPLATE.format(research_summary=research_summary)
+    web_clues_path = context.paths.run_dir / "research_web_clues.json"
+    web_clues_payload = {}
+    if web_clues_path.exists():
+        web_clues_payload = json.loads(
+            web_clues_path.read_text(encoding="utf-8"))
+    web_context = _format_web_context(web_clues_payload.get("clues") or [])
+    prompt = CODEGEN_PROMPT_TEMPLATE.format(
+        research_summary=research_summary, web_context=web_context)
     source = ""
     last_error = ""
     for attempt in range(3):
@@ -533,6 +617,8 @@ def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> 
             "- Output Python code only.\n"
             "Research summary:\n"
             f"{research_summary}\n"
+            "Web clues:\n"
+            f"{web_context}\n"
             "Previous code:\n"
             f"```python\n{source}\n```"
         )
@@ -540,14 +626,50 @@ def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> 
         raise RuntimeError(
             f"Generated algorithm failed contract verification: {last_error}")
 
+    prepare_prompt = PREPARE_CODEGEN_PROMPT_TEMPLATE.format(
+        research_summary=research_summary, web_context=web_context)
+    prepare_source = ""
+    prepare_last_error = ""
+    for attempt in range(3):
+        context.log_event("codegen", "prepare_attempt",
+                          {"attempt": attempt + 1})
+        prepare_source = _call_openrouter_code(context, prepare_prompt)
+        try:
+            _validate_python_source(prepare_source)
+            _validate_prepare_signature(prepare_source)
+            _validate_allowed_imports(prepare_source)
+            prepare_path.write_text(prepare_source, encoding="utf-8")
+            break
+        except Exception as exc:
+            prepare_last_error = str(exc)
+            prepare_prompt = (
+                "Rewrite the COMPLETE prepare.py file to satisfy contract.\n"
+                f"Previous error: {prepare_last_error}\n"
+                "STRICT constraints:\n"
+                "- Allowed libraries: Python stdlib, Pillow(PIL), numpy, scipy, cv2, skimage, imageio.\n"
+                "- Must define evaluate(input_image_path, output_image_path) returning dict with metric fields.\n"
+                "- Output Python code only.\n"
+                "Research summary:\n"
+                f"{research_summary}\n"
+                "Web clues:\n"
+                f"{web_context}\n"
+                "Previous code:\n"
+                f"```python\n{prepare_source}\n```"
+            )
+    else:
+        raise RuntimeError(
+            f"Generated prepare.py failed validation: {prepare_last_error}")
+
     source_hash = sha256(source.encode("utf-8")).hexdigest()
     artifact = GeneratedAlgorithmArtifact(
         path=algorithm_path,
+        prepare_path=prepare_path,
         source_hash=source_hash,
         strategy_name=research_result.chosen_strategy,
         syntax_validated=True,
     )
     context.artifacts["algorithm"] = algorithm_path
+    context.artifacts["prepare"] = prepare_path
     context.write_json("codegen.json", artifact.to_dict())
     return artifact
 
@@ -556,7 +678,13 @@ class OptimizerAdapter:
     def __init__(self, config: PipelineConfig):
         self.config = config
 
-    def optimize(self, algo_file_path: str, user_prompt: str, user_image_file_path: str) -> None:
+    def optimize(
+        self,
+        algo_file_path: str,
+        user_prompt: str,
+        user_image_file_path: str,
+        prepare_file_path: str | None = None,
+    ) -> None:
         module_name = self.config.optimizer_module
         if not module_name:
             return
@@ -564,11 +692,15 @@ class OptimizerAdapter:
         module = __import__(module_name, fromlist=[
                             self.config.optimizer_function])
         optimizer_function = getattr(module, self.config.optimizer_function)
-        optimizer_function(
-            algo_file_path=algo_file_path,
-            user_prompt=user_prompt,
-            user_image_file_path=user_image_file_path,
-        )
+        kwargs = {
+            "algo_file_path": algo_file_path,
+            "user_prompt": user_prompt,
+            "user_image_file_path": user_image_file_path,
+        }
+        signature = inspect.signature(optimizer_function)
+        if "prepare_file_path" in signature.parameters:
+            kwargs["prepare_file_path"] = prepare_file_path
+        optimizer_function(**kwargs)
 
 
 def optimize_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgorithmArtifact) -> tuple[bool, str]:
@@ -581,6 +713,8 @@ def optimize_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgori
         algo_file_path=str(algorithm_artifact.path),
         user_prompt=context.request.scene_prompt,
         user_image_file_path=str(context.artifacts["input_image"]),
+        prepare_file_path=str(algorithm_artifact.prepare_path.resolve(
+        )) if algorithm_artifact.prepare_path else None,
     )
     after_text = algorithm_artifact.path.read_text(encoding="utf-8")
     after_hash = sha256(after_text.encode("utf-8")).hexdigest()

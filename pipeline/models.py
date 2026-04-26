@@ -107,6 +107,8 @@ class ResearchResult:
     scene_prompt: str
     candidates: list[CandidateMethod]
     chosen_strategy: str
+    evaluation_metrics: list[str]
+    evaluation_plan: str
     summary: str
     sources: list[str] = field(default_factory=list)
 
@@ -115,6 +117,8 @@ class ResearchResult:
             "scene_prompt": self.scene_prompt,
             "candidates": [asdict(candidate) for candidate in self.candidates],
             "chosen_strategy": self.chosen_strategy,
+            "evaluation_metrics": self.evaluation_metrics,
+            "evaluation_plan": self.evaluation_plan,
             "summary": self.summary,
             "sources": self.sources,
         }
@@ -123,6 +127,7 @@ class ResearchResult:
 @dataclass(slots=True)
 class GeneratedAlgorithmArtifact:
     path: Path
+    prepare_path: Path | None
     source_hash: str
     strategy_name: str
     syntax_validated: bool = False
@@ -130,6 +135,7 @@ class GeneratedAlgorithmArtifact:
     def to_dict(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
+            "prepare_path": str(self.prepare_path) if self.prepare_path else None,
             "source_hash": self.source_hash,
             "strategy_name": self.strategy_name,
             "syntax_validated": self.syntax_validated,

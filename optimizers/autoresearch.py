@@ -9,7 +9,12 @@ def _get_data_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
-def start_experiment(train_file_path: str, scenario_description: str, user_image_file_path: str | None = None) -> str | None:
+def start_experiment(
+    train_file_path: str,
+    scenario_description: str,
+    user_image_file_path: str | None = None,
+    prepare_file_path: str | None = None,
+) -> str | None:
     data_dir = _get_data_dir()
     program_md_path = os.path.join(data_dir, "program.md")
     backup_md_path = os.path.join(data_dir, "program.md.bak")
@@ -31,10 +36,10 @@ def start_experiment(train_file_path: str, scenario_description: str, user_image
         user_image_file_path if user_image_file_path else "User Image File Path",
     )
     content = content.replace("{{SCENARIO_DESCRIPTION}}", scenario_description)
+    resolved_prepare_file_path = prepare_file_path or os.path.join(
+        data_dir, "prepare.py")
     content = content.replace(
-        "{{PREPARE_FILE_PATH}}",
-        os.path.join(data_dir, "prepare.py").replace("\\", "\\\\"),
-    )
+        "{{PREPARE_FILE_PATH}}", resolved_prepare_file_path.replace("\\", "\\\\"))
 
     if user_image_file_path:
         if "User Image File Path:" not in content:
@@ -65,11 +70,17 @@ def start_experiment(train_file_path: str, scenario_description: str, user_image
     return train_file_path
 
 
-def optimize(algo_file_path: str, user_prompt: str, user_image_file_path: str) -> None:
+def optimize(
+    algo_file_path: str,
+    user_prompt: str,
+    user_image_file_path: str,
+    prepare_file_path: str | None = None,
+) -> None:
     """
     Adapter function for cprp pipeline.
 
     Matches the OptimizerAdapter signature in cprp/pipeline/stages.py:
         optimize(algo_file_path: str, user_prompt: str, user_image_file_path: str) -> None
     """
-    start_experiment(algo_file_path, user_prompt, user_image_file_path)
+    start_experiment(algo_file_path, user_prompt,
+                     user_image_file_path, prepare_file_path)
