@@ -30,9 +30,19 @@ from prompts import (
 from .context import PipelineContext
 from .models import (
     CandidateMethod,
+    DEFAULT_HTTP_MAX_RETRIES,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_TIMEOUT_SECONDS,
+    DEFAULT_MAX_MEMORY_MB,
+    DEFAULT_OPTIMIZER_FUNCTION,
+    DEFAULT_OPTIMIZER_MODULE,
+    DEFAULT_RETRY_INITIAL_DELAY,
+    DEFAULT_RETRY_JITTER,
+    DEFAULT_RETRY_MAX_DELAY,
+    DEFAULT_TIMEOUT_SECONDS,
     ExecutionResult,
     GeneratedAlgorithmArtifact,
-    PipelineConfig,
     QualityReport,
     ResearchResult,
 )
@@ -40,8 +50,8 @@ from .resilience import (
     BusinessLogicError,
     ModelResponseParseError,
     RetryableStatusCodeError,
+    build_retry_policy,
     build_retry_decorator,
-    build_retry_policy_from_config,
     extract_status_code,
 )
 
@@ -140,8 +150,13 @@ def _create_openrouter_client() -> tuple[OpenAI, str]:
 
 def _call_openrouter_json(context: PipelineContext, prompt: str) -> dict[str, Any]:
     start_time = time.time()
-    policy = build_retry_policy_from_config(context.request.config, kind="llm")
-    llm_timeout = float(context.request.config.llm_timeout_seconds)
+    policy = build_retry_policy(
+        max_retries=DEFAULT_LLM_MAX_RETRIES,
+        initial_delay=DEFAULT_RETRY_INITIAL_DELAY,
+        max_delay=DEFAULT_RETRY_MAX_DELAY,
+        jitter=DEFAULT_RETRY_JITTER,
+    )
+    llm_timeout = float(DEFAULT_LLM_TIMEOUT_SECONDS)
     context.log_event("tool_call", "openrouter_json_start",
                       {
                           "prompt_preview": prompt[:240],
@@ -232,8 +247,13 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
         ),
     ]
     start_time = time.time()
-    policy = build_retry_policy_from_config(context.request.config, kind="http")
-    http_timeout = float(context.request.config.http_timeout_seconds)
+    policy = build_retry_policy(
+        max_retries=DEFAULT_HTTP_MAX_RETRIES,
+        initial_delay=DEFAULT_RETRY_INITIAL_DELAY,
+        max_delay=DEFAULT_RETRY_MAX_DELAY,
+        jitter=DEFAULT_RETRY_JITTER,
+    )
+    http_timeout = float(DEFAULT_HTTP_TIMEOUT_SECONDS)
     context.log_event("tool_call", "tavily_start", {
                       "query": f"image processing algorithm for: {scene_prompt}",
                       "timeout_seconds": http_timeout,
@@ -571,7 +591,7 @@ def _validate_prepare_signature(source: str) -> None:
 
 
 def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> GeneratedAlgorithmArtifact:
-    algo_dir = context.request.config.algorithms_root or context.paths.generated_algorithms_dir
+    algo_dir = context.paths.generated_algorithms_dir
     algo_dir.mkdir(parents=True, exist_ok=True)
     strategy_fragment = _safe_filename_fragment(
         research_result.chosen_strategy)
@@ -675,9 +695,6 @@ def codegen_stage(context: PipelineContext, research_result: ResearchResult) -> 
 
 
 class OptimizerAdapter:
-    def __init__(self, config: PipelineConfig):
-        self.config = config
-
     def optimize(
         self,
         algo_file_path: str,
@@ -685,13 +702,12 @@ class OptimizerAdapter:
         user_image_file_path: str,
         prepare_file_path: str | None = None,
     ) -> None:
-        module_name = self.config.optimizer_module
+        module_name = DEFAULT_OPTIMIZER_MODULE
         if not module_name:
             return
 
-        module = __import__(module_name, fromlist=[
-                            self.config.optimizer_function])
-        optimizer_function = getattr(module, self.config.optimizer_function)
+        module = __import__(module_name, fromlist=[DEFAULT_OPTIMIZER_FUNCTION])
+        optimizer_function = getattr(module, DEFAULT_OPTIMIZER_FUNCTION)
         kwargs = {
             "algo_file_path": algo_file_path,
             "user_prompt": user_prompt,
@@ -708,7 +724,7 @@ def optimize_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgori
     before_hash = sha256(before_text.encode("utf-8")).hexdigest()
     context.log_event("tool_call", "optimizer_start", {
                       "algorithm_path": algorithm_artifact.path})
-    adapter = OptimizerAdapter(context.request.config)
+    adapter = OptimizerAdapter()
     adapter.optimize(
         algo_file_path=str(algorithm_artifact.path),
         user_prompt=context.request.scene_prompt,
@@ -752,8 +768,8 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
         try:
             import resource
 
-            if context.request.config.max_memory_mb:
-                bytes_limit = context.request.config.max_memory_mb * 1024 * 1024
+            if DEFAULT_MAX_MEMORY_MB:
+                bytes_limit = DEFAULT_MAX_MEMORY_MB * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS,
                                    (bytes_limit, bytes_limit))
         except Exception:
@@ -764,7 +780,7 @@ def execution_stage(context: PipelineContext, algorithm_artifact: GeneratedAlgor
             command,
             capture_output=True,
             text=True,
-            timeout=context.request.config.timeout_seconds,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
             cwd=str(context.paths.run_dir),
             preexec_fn=_limit_resources if os.name == "posix" else None,
         )
@@ -850,7 +866,7 @@ def evaluate_stage(context: PipelineContext, execution_result: ExecutionResult) 
     psnr_value = _psnr(reference_array, candidate_array)
     ssim_value = _ssim(reference_array, candidate_array)
     latency_score = max(0.0, 1.0 - (execution_result.duration_seconds /
-                        max(context.request.config.timeout_seconds, 1)))
+                        max(DEFAULT_TIMEOUT_SECONDS, 1)))
     normalized_psnr = min(psnr_value / 40.0, 1.0)
     score = float(
         np.mean([normalized_psnr, max(0.0, ssim_value), latency_score]))

@@ -9,7 +9,7 @@ import json
 import shutil
 import uuid
 
-from .models import PipelineRequest, StageName, StageRecord, StageStatus
+from .models import DEFAULT_OUTPUT_ROOT, DEFAULT_SESSION_ID, PipelineRequest, StageName, StageRecord, StageStatus
 
 
 # ---------- 工具函数 ----------
@@ -119,18 +119,21 @@ class PipelineContext:
     stage_records: dict[StageName, StageRecord] = field(default_factory=dict)
     artifacts: dict[str, Path] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    _stage_start_times: dict[StageName, float] = field(default_factory=dict, init=False)
+    _stage_start_times: dict[StageName, float] = field(
+        default_factory=dict, init=False)
 
     @classmethod
     def create(cls, request: PipelineRequest) -> "PipelineContext":
-        session_id = request.config.session_id or make_session_id()
+        session_id = DEFAULT_SESSION_ID or make_session_id()
         run_id = make_run_id(request.scene_prompt)
-        paths = PipelinePaths.create(request.config.output_root, session_id, run_id)
-        context = cls(request=request, session_id=session_id, run_id=run_id, paths=paths)
+        paths = PipelinePaths.create(DEFAULT_OUTPUT_ROOT, session_id, run_id)
+        context = cls(request=request, session_id=session_id,
+                      run_id=run_id, paths=paths)
         context.metadata["created_at"] = _utc_now()
         context.metadata["session_id"] = session_id
         # 仅写入日志文件，不打印到控制台（由美化方法接管）
-        context._write_event_log("pipeline", "created", {"session_id": session_id, "run_id": run_id})
+        context._write_event_log("pipeline", "created", {
+                                 "session_id": session_id, "run_id": run_id})
         return context
 
     # ---------- 内部日志写入（保留原功能，供审计） ----------
@@ -174,7 +177,8 @@ class PipelineContext:
         print(f"   会话ID: {self.session_id}")
         print(f"   运行ID: {self.run_id}")
         print(f"   输入图片: {self.request.image_path}")
-        print(f"   场景提示: {self.request.scene_prompt[:60]}{'...' if len(self.request.scene_prompt) > 60 else ''}")
+        print(
+            f"   场景提示: {self.request.scene_prompt[:60]}{'...' if len(self.request.scene_prompt) > 60 else ''}")
         print("=" * 70)
 
     def print_stage_start(self, stage: StageName, message: str = "") -> None:
@@ -250,7 +254,8 @@ class PipelineContext:
         record.started_at = _utc_now()
         record.message = message
         self.write_stage_record(stage_name)
-        self._write_event_log("stage", "start", {"stage": stage_name.value, "message": message})
+        self._write_event_log(
+            "stage", "start", {"stage": stage_name.value, "message": message})
         # 美化打印
         self.print_stage_start(stage_name, message or "")
         return record
@@ -290,7 +295,8 @@ class PipelineContext:
     def write_stage_record(self, stage_name: StageName) -> Path:
         record = self.ensure_stage_record(stage_name)
         stage_path = self.paths.stages_dir / f"{stage_name.value}.json"
-        stage_path.write_text(json.dumps(record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        stage_path.write_text(json.dumps(
+            record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         return stage_path
 
     def copy_input_image(self) -> Path:
@@ -300,11 +306,14 @@ class PipelineContext:
         destination = self.paths.inputs_dir / source.name
         shutil.copy2(source, destination)
         self.artifacts["input_image"] = destination
-        self._write_event_log("artifact", "copied_input", {"source": source, "destination": destination})
+        self._write_event_log("artifact", "copied_input", {
+                              "source": source, "destination": destination})
         return destination
 
     def write_json(self, relative_name: str, payload: dict[str, Any]) -> Path:
         destination = self.paths.run_dir / relative_name
-        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._write_event_log("artifact", "write_json", {"path": destination, "name": relative_name})
+        destination.write_text(json.dumps(
+            payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._write_event_log("artifact", "write_json", {
+                              "path": destination, "name": relative_name})
         return destination

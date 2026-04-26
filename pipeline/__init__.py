@@ -3,7 +3,6 @@ from .models import (
     CandidateMethod,
     ExecutionResult,
     GeneratedAlgorithmArtifact,
-    PipelineConfig,
     PipelineRequest,
     PipelineResult,
     QualityReport,

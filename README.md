@@ -8,7 +8,7 @@
 uv run python main.py --image-path path/to/image.png --scene-prompt "请增强夜景照片的清晰度"
 ```
 
-可选参数包括 `--output-root`、`--session-id`、`--algorithms-root`、`--timeout-seconds`、`--max-memory-mb`、`--optimizer-module` 和 `--continue-on-optimizer-failure` 。
+现在入口只保留 `--image-path` 和 `--scene-prompt`，其余配置已在代码中固定。
 
 默认产物会按 session 聚合写入，并维护最新会话软链接：
 

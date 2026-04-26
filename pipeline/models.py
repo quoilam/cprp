@@ -6,6 +6,23 @@ from pathlib import Path
 from typing import Any
 
 
+DEFAULT_OUTPUT_ROOT = Path("output")
+DEFAULT_SESSION_ID: str | None = None
+DEFAULT_TIMEOUT_SECONDS = 180
+DEFAULT_LLM_MAX_RETRIES = 3
+DEFAULT_HTTP_MAX_RETRIES = 3
+DEFAULT_RETRY_INITIAL_DELAY = 1.0
+DEFAULT_RETRY_MAX_DELAY = 8.0
+DEFAULT_RETRY_JITTER = 0.2
+DEFAULT_LLM_TIMEOUT_SECONDS = 45.0
+DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
+DEFAULT_EXECUTOR_RETRY_ONCE = False
+DEFAULT_OPTIMIZER_MODULE = "optimizers.autoresearch"
+DEFAULT_OPTIMIZER_FUNCTION = "optimize"
+DEFAULT_CONTINUE_ON_OPTIMIZER_FAILURE = False
+DEFAULT_MAX_MEMORY_MB: int | None = None
+
+
 class StageStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -24,71 +41,14 @@ class StageName(str, Enum):
 
 
 @dataclass(slots=True)
-class PipelineConfig:
-    output_root: Path = Path("output")
-    algorithms_root: Path | None = None
-    session_id: str | None = None
-    timeout_seconds: int = 180
-    llm_max_retries: int = 3
-    http_max_retries: int = 3
-    retry_initial_delay: float = 1.0
-    retry_max_delay: float = 8.0
-    retry_jitter: float = 0.2
-    llm_timeout_seconds: float = 45.0
-    http_timeout_seconds: float = 30.0
-    executor_retry_once: bool = False
-    optimizer_module: str | None = None
-    optimizer_function: str = "optimize"
-    continue_on_optimizer_failure: bool = False
-    max_memory_mb: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than 0")
-
-        if self.llm_max_retries < 0:
-            raise ValueError("llm_max_retries must be >= 0")
-
-        if self.http_max_retries < 0:
-            raise ValueError("http_max_retries must be >= 0")
-
-        if self.retry_initial_delay < 0:
-            raise ValueError("retry_initial_delay must be >= 0")
-
-        if self.retry_max_delay < 0:
-            raise ValueError("retry_max_delay must be >= 0")
-
-        if self.retry_jitter < 0:
-            raise ValueError("retry_jitter must be >= 0")
-
-        if self.llm_timeout_seconds <= 0:
-            raise ValueError("llm_timeout_seconds must be greater than 0")
-
-        if self.http_timeout_seconds <= 0:
-            raise ValueError("http_timeout_seconds must be greater than 0")
-
-        if self.max_memory_mb is not None and self.max_memory_mb <= 0:
-            raise ValueError("max_memory_mb must be greater than 0 when provided")
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["output_root"] = str(self.output_root)
-        data["algorithms_root"] = str(
-            self.algorithms_root) if self.algorithms_root else None
-        return data
-
-
-@dataclass(slots=True)
 class PipelineRequest:
     image_path: Path
     scene_prompt: str
-    config: PipelineConfig = field(default_factory=PipelineConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "image_path": str(self.image_path),
             "scene_prompt": self.scene_prompt,
-            "config": self.config.to_dict(),
         }
 
 

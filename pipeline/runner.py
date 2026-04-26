@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .context import PipelineContext
-from .models import PipelineRequest, PipelineResult, StageName, StageStatus
+from .models import DEFAULT_CONTINUE_ON_OPTIMIZER_FAILURE, PipelineRequest, PipelineResult, StageName, StageStatus
 from .stages import codegen_stage, evaluate_stage, execution_stage, optimize_stage, package_stage, research_stage
 
 
@@ -17,7 +17,7 @@ class PipelineRunner:
         current_stage = StageName.RESEARCH
 
         try:
-            
+
             # ---------- 1. 研究阶段 ----------
             current_stage = StageName.RESEARCH
             context.start_stage(StageName.RESEARCH, "正在检索并生成候选方法...")
@@ -26,18 +26,19 @@ class PipelineRunner:
             # 构建候选算法详情字符串
             candidate_lines = []
             for idx, cand in enumerate(research_result.candidates, 1):
-                candidate_lines.append(f"{idx}. {cand.name} (置信度 {cand.confidence:.2f})")
+                candidate_lines.append(
+                    f"{idx}. {cand.name} (置信度 {cand.confidence:.2f})")
             candidate_details = "\n".join(candidate_lines)
 
             extra = {
-                     "推荐策略": research_result.chosen_strategy,
-                      "候选算法": f"\n{candidate_details}"
+                "推荐策略": research_result.chosen_strategy,
+                "候选算法": f"\n{candidate_details}"
             }
             context.finish_stage(
-               StageName.RESEARCH,
-               StageStatus.SUCCEEDED,
+                StageName.RESEARCH,
+                StageStatus.SUCCEEDED,
                 "研究完成",
-               extra_info=extra
+                extra_info=extra
             )
             result.research_result = research_result
 
@@ -57,15 +58,17 @@ class PipelineRunner:
             # ---------- 3. 优化阶段 ----------
             current_stage = StageName.OPTIMIZER
             context.start_stage(StageName.OPTIMIZER, "正在执行优化器...")
-            optimizer_success, optimizer_message = optimize_stage(context, algorithm_artifact)
+            optimizer_success, optimizer_message = optimize_stage(
+                context, algorithm_artifact)
             optimizer_status = StageStatus.SUCCEEDED if optimizer_success else StageStatus.FAILED
             context.finish_stage(
                 StageName.OPTIMIZER,
                 optimizer_status,
                 optimizer_message,
-                extra_info={"代码变更": "是" if "modified" in optimizer_message else "否"}
+                extra_info={
+                    "代码变更": "是" if "modified" in optimizer_message else "否"}
             )
-            if not optimizer_success and not request.config.continue_on_optimizer_failure:
+            if not optimizer_success and not DEFAULT_CONTINUE_ON_OPTIMIZER_FAILURE:
                 raise RuntimeError(optimizer_message)
 
             # ---------- 4. 执行阶段 ----------
