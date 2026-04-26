@@ -30,9 +30,9 @@ def make_session_id() -> str:
     return f"session_{uuid.uuid4().hex[:10]}"
 
 
-def _update_latest_symlink(root: Path, session_dir: Path) -> None:
+def _update_latest_symlink(root: Path, run_dir: Path) -> None:
     latest_path = root / "latest"
-    target_name = session_dir.name
+    target_name = run_dir.name
 
     if latest_path.is_symlink() or latest_path.is_file():
         latest_path.unlink()
@@ -64,49 +64,56 @@ _STAGE_ORDER = [
 @dataclass(slots=True)
 class PipelinePaths:
     root: Path
-    session_dir: Path
     run_dir: Path
-    generated_algorithms_dir: Path
-    inputs_dir: Path
+    original_dir: Path
+    generated_dir: Path
+    result_dir: Path
     artifacts_dir: Path
-    stages_dir: Path
-    logs_dir: Path
     events_log_path: Path
-    output_dir: Path
-    manifest_path: Path
+    report_path: Path
+
+    @property
+    def inputs_dir(self) -> Path:
+        return self.original_dir
+
+    @property
+    def generated_algorithms_dir(self) -> Path:
+        return self.generated_dir
+
+    @property
+    def output_dir(self) -> Path:
+        return self.result_dir
+
+    @property
+    def manifest_path(self) -> Path:
+        # Backward-compatible alias. The final merged report is report.json.
+        return self.report_path
 
     @classmethod
-    def create(cls, output_root: Path, session_id: str, run_id: str) -> "PipelinePaths":
+    def create(cls, output_root: Path, run_id: str) -> "PipelinePaths":
         absolute_root = output_root.resolve()
-        session_dir = absolute_root / session_id
-        run_dir = session_dir / run_id
+        run_dir = absolute_root / run_id
         paths = cls(
             root=absolute_root,
-            session_dir=session_dir,
             run_dir=run_dir,
-            generated_algorithms_dir=run_dir / "algorithms",
-            inputs_dir=run_dir / "inputs",
+            original_dir=run_dir / "original",
+            generated_dir=run_dir / "generated",
+            result_dir=run_dir / "result",
             artifacts_dir=run_dir / "artifacts",
-            stages_dir=run_dir / "stages",
-            logs_dir=run_dir / "logs",
-            events_log_path=run_dir / "logs" / "events.jsonl",
-            output_dir=run_dir / "output",
-            manifest_path=run_dir / "manifest.json",
+            events_log_path=run_dir / "events.jsonl",
+            report_path=run_dir / "report.json",
         )
         for directory in [
             paths.root,
-            paths.session_dir,
             paths.run_dir,
-            paths.generated_algorithms_dir,
-            paths.inputs_dir,
+            paths.original_dir,
+            paths.generated_dir,
+            paths.result_dir,
             paths.artifacts_dir,
-            paths.stages_dir,
-            paths.logs_dir,
-            paths.output_dir,
         ]:
             directory.mkdir(parents=True, exist_ok=True)
 
-        _update_latest_symlink(paths.root, paths.session_dir)
+        _update_latest_symlink(paths.root, paths.run_dir)
         return paths
 
 
@@ -126,7 +133,7 @@ class PipelineContext:
     def create(cls, request: PipelineRequest) -> "PipelineContext":
         session_id = DEFAULT_SESSION_ID or make_session_id()
         run_id = make_run_id(request.scene_prompt)
-        paths = PipelinePaths.create(DEFAULT_OUTPUT_ROOT, session_id, run_id)
+        paths = PipelinePaths.create(DEFAULT_OUTPUT_ROOT, run_id)
         context = cls(request=request, session_id=session_id,
                       run_id=run_id, paths=paths)
         context.metadata["created_at"] = _utc_now()
@@ -294,10 +301,18 @@ class PipelineContext:
 
     def write_stage_record(self, stage_name: StageName) -> Path:
         record = self.ensure_stage_record(stage_name)
-        stage_path = self.paths.stages_dir / f"{stage_name.value}.json"
-        stage_path.write_text(json.dumps(
-            record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-        return stage_path
+        checkpoint_payload = {
+            "run_id": self.run_id,
+            "stage_records": [
+                value.to_dict() for _, value in sorted(self.stage_records.items(), key=lambda item: item[0].value)
+            ],
+            "updated_at": _utc_now(),
+        }
+        self.paths.report_path.write_text(
+            json.dumps(checkpoint_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return self.paths.report_path
 
     def copy_input_image(self) -> Path:
         source = self.request.image_path

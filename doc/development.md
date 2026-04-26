@@ -13,11 +13,13 @@ The project is being collapsed into a single pipeline entrypoint. The CLI accept
 
 ## Artifact Layout
 
-- `output/<session_id>/<run_id>/inputs/` stores copied input assets.
-- `output/<session_id>/<run_id>/artifacts/` stores snapshots and stage byproducts.
-- `output/<session_id>/<run_id>/stages/` stores per-stage JSON state.
-- `output/<session_id>/<run_id>/manifest.json` stores the final result package.
-- `output/latest` is a soft link pointing to the latest `<session_id>` directory.
+- `output/<run_id>/original/` stores copied input assets.
+- `output/<run_id>/generated/` stores generated algorithm files.
+- `output/<run_id>/result/` stores execution outputs.
+- `output/<run_id>/artifacts/` stores snapshots and stage byproducts.
+- `output/<run_id>/events.jsonl` stores event logs.
+- `output/<run_id>/report.json` stores merged stage records and the final packaged result.
+- `output/latest` is a soft link pointing to the latest `<run_id>` directory.
 
 ## Verification Targets
 
