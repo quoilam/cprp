@@ -29,10 +29,46 @@ class PipelineConfig:
     algorithms_root: Path | None = None
     session_id: str | None = None
     timeout_seconds: int = 180
+    llm_max_retries: int = 3
+    http_max_retries: int = 3
+    retry_initial_delay: float = 1.0
+    retry_max_delay: float = 8.0
+    retry_jitter: float = 0.2
+    llm_timeout_seconds: float = 45.0
+    http_timeout_seconds: float = 30.0
+    executor_retry_once: bool = False
     optimizer_module: str | None = None
     optimizer_function: str = "optimize"
     continue_on_optimizer_failure: bool = False
     max_memory_mb: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than 0")
+
+        if self.llm_max_retries < 0:
+            raise ValueError("llm_max_retries must be >= 0")
+
+        if self.http_max_retries < 0:
+            raise ValueError("http_max_retries must be >= 0")
+
+        if self.retry_initial_delay < 0:
+            raise ValueError("retry_initial_delay must be >= 0")
+
+        if self.retry_max_delay < 0:
+            raise ValueError("retry_max_delay must be >= 0")
+
+        if self.retry_jitter < 0:
+            raise ValueError("retry_jitter must be >= 0")
+
+        if self.llm_timeout_seconds <= 0:
+            raise ValueError("llm_timeout_seconds must be greater than 0")
+
+        if self.http_timeout_seconds <= 0:
+            raise ValueError("http_timeout_seconds must be greater than 0")
+
+        if self.max_memory_mb is not None and self.max_memory_mb <= 0:
+            raise ValueError("max_memory_mb must be greater than 0 when provided")
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
