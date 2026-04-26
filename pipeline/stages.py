@@ -30,6 +30,14 @@ from .models import (
     QualityReport,
     ResearchResult,
 )
+from .resilience import (
+    BusinessLogicError,
+    ModelResponseParseError,
+    RetryableStatusCodeError,
+    build_retry_decorator,
+    build_retry_policy_from_config,
+    extract_status_code,
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -53,6 +61,21 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Expected a JSON object response.")
     return payload
+
+
+def _looks_like_truncated_json(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.endswith(("...", "```", ",", ":", "\\")):
+        return True
+    if stripped.count("{") > stripped.count("}"):
+        return True
+    if stripped.count("[") > stripped.count("]"):
+        return True
+    if stripped.startswith("{") and not stripped.endswith("}"):
+        return True
+    return False
 
 
 def _extract_python_code(text: str) -> str:
@@ -84,22 +107,53 @@ def _create_openrouter_client() -> tuple[OpenAI, str]:
 
 def _call_openrouter_json(context: PipelineContext, prompt: str) -> dict[str, Any]:
     start_time = time.time()
+    policy = build_retry_policy_from_config(context.request.config, kind="llm")
+    llm_timeout = float(context.request.config.llm_timeout_seconds)
     context.log_event("tool_call", "openrouter_json_start",
-                      {"prompt_preview": prompt[:240]})
+                      {
+                          "prompt_preview": prompt[:240],
+                          "timeout_seconds": llm_timeout,
+                          "max_retries": policy.max_retries,
+                          "max_attempts": policy.max_attempts,
+                      })
     client, model = _create_openrouter_client()
-    completion = client.chat.completions.create(
-        model=model,
-        temperature=0.2,
-        messages=[
-            {"role": "system", "content": PIPELINE_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+
+    @build_retry_decorator(
+        context=context,
+        stage="research",
+        operation="openrouter_json",
+        policy=policy,
     )
-    content = completion.choices[0].message.content or ""
+    def _call_once() -> tuple[str, dict[str, Any]]:
+        completion = client.chat.completions.create(
+            model=model,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": PIPELINE_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            timeout=llm_timeout,
+        )
+        content = completion.choices[0].message.content or ""
+        try:
+            return content, _extract_json_object(content)
+        except Exception as exc:
+            is_truncated = _looks_like_truncated_json(content)
+            message = (
+                "OpenRouter JSON parse failed: response appears truncated."
+                if is_truncated
+                else "OpenRouter JSON parse failed: invalid JSON payload."
+            )
+            raise ModelResponseParseError(
+                message,
+                retryable=is_truncated,
+            ) from exc
+
+    content, payload = _call_once()
     duration = time.time() - start_time
     context.log_event("tool_call", "openrouter_json_finish", {
                       "model": model, "duration_seconds": duration, "response_preview": content[:240]})
-    return _extract_json_object(content)
+    return payload
 
 
 def _call_openrouter_code(context: PipelineContext, prompt: str) -> str:
@@ -129,9 +183,22 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
                           "reason": "TAVILY_API_KEY missing"})
         return []
     start_time = time.time()
+    policy = build_retry_policy_from_config(context.request.config, kind="http")
+    http_timeout = float(context.request.config.http_timeout_seconds)
     context.log_event("tool_call", "tavily_start", {
-                      "query": f"image processing algorithm for: {scene_prompt}"})
-    try:
+                      "query": f"image processing algorithm for: {scene_prompt}",
+                      "timeout_seconds": http_timeout,
+                      "max_retries": policy.max_retries,
+                      "max_attempts": policy.max_attempts,
+                      })
+
+    @build_retry_decorator(
+        context=context,
+        stage="research",
+        operation="tavily_search",
+        policy=policy,
+    )
+    def _request_once() -> list[dict[str, str]]:
         response = requests.post(
             "https://api.tavily.com/search",
             headers={"Content-Type": "application/json"},
@@ -143,8 +210,21 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
                 "include_answer": False,
                 "include_images": False,
             },
-            timeout=30,
+            timeout=http_timeout,
         )
+        status_code = int(response.status_code)
+
+        if 400 <= status_code < 500 and status_code != 429:
+            context.log_event("tool_call", "tavily_fast_fail", {
+                              "status_code": status_code, "degraded": True})
+            return []
+
+        if status_code == 429 or status_code >= 500:
+            raise RetryableStatusCodeError(
+                status_code,
+                f"Tavily retryable status: {status_code}",
+            )
+
         response.raise_for_status()
         data = response.json()
         results = data.get("results") or []
@@ -157,12 +237,22 @@ def _search_web_clues(context: PipelineContext, scene_prompt: str) -> list[dict[
                     "content": str(item.get("content") or "")[:500],
                 }
             )
+        return clues
+
+    try:
+        clues = _request_once()
         context.log_event("tool_call", "tavily_finish", {
                           "duration_seconds": time.time() - start_time, "result_count": len(clues)})
         return clues
     except Exception as exc:
+        status_code = extract_status_code(exc)
         context.log_event("tool_call", "tavily_error", {
-                          "duration_seconds": time.time() - start_time, "error": str(exc)})
+                          "duration_seconds": time.time() - start_time,
+                          "error": str(exc),
+                          "error_type": type(exc).__name__,
+                          "status_code": status_code,
+                          "degraded": True,
+                          })
         return []
 
 
@@ -270,7 +360,15 @@ def research_stage(context: PipelineContext) -> ResearchResult:
     payload = _call_openrouter_json(context, research_prompt)
     payload_candidates = payload.get("candidates")
     if not isinstance(payload_candidates, list) or not payload_candidates:
-        raise ValueError("Research response has no valid candidates.")
+        detail = {
+            "error_code": "ResearchCandidatesInvalid",
+            "message": "Research response has no valid candidates.",
+            "payload_keys": sorted(payload.keys()),
+            "candidate_count": len(payload_candidates) if isinstance(payload_candidates, list) else None,
+            "stage": "research",
+        }
+        context.log_event("research", "invalid_candidates", detail)
+        raise BusinessLogicError(json.dumps(detail, ensure_ascii=False))
 
     candidates: list[CandidateMethod] = []
     for item in payload_candidates:
@@ -289,8 +387,14 @@ def research_stage(context: PipelineContext) -> ResearchResult:
             )
         )
     if not candidates:
-        raise ValueError(
-            "Research response candidates are empty after parsing.")
+        detail = {
+            "error_code": "ResearchCandidatesEmpty",
+            "message": "Research response candidates are empty after parsing.",
+            "candidate_count": 0,
+            "stage": "research",
+        }
+        context.log_event("research", "empty_candidates_after_parse", detail)
+        raise BusinessLogicError(json.dumps(detail, ensure_ascii=False))
 
     chosen_strategy = str(payload.get("chosen_strategy") or candidates[0].name)
     summary = str(payload.get("summary") or f"Selected {chosen_strategy}")

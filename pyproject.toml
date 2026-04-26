@@ -17,4 +17,5 @@ dependencies = [
     "requests>=2.33.1",
     "scikit-image>=0.26.0",
     "scipy>=1.17.1",
+    "tenacity>=9.0.0",
 ]
