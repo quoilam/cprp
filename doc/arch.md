@@ -1,135 +1,439 @@
-# 项目架构分析
+# 项目架构
 
 ## 1. 项目定位
 
-VibeImpl 是一个单入口的图像算法自动化流水线。用户只提供一张输入图片和一段场景描述，系统就会按固定顺序完成研究、代码生成、优化、执行、评估和结果打包，最终输出一个带完整过程记录的 run 目录。
+VibeImpl 是一个单入口的图像算法自动化流水线。用户输入一张图片和一段场景描述，系统按照固定阶段完成研究、代码生成、优化、执行、评估、选优和打包，并把全过程工件落到 `output/<run_id>/`。
 
-这个项目的核心特点不是“训练模型”，而是“编排一条可审计的图像处理生成链路”：前半段负责把自然语言任务转成候选方案和可执行代码，后半段负责把代码跑起来、计算指标、再把结果固化到磁盘。
+项目核心不是训练模型，而是编排一条可审计、可回退、可重试的图像处理链路：
 
-## 2. 系统分层
+1. 先把自然语言任务转换成候选算法 clue。
+2. 再把候选 clue 转成可执行 Python 算法。
+3. 对算法做优化与执行。
+4. 基于质量与耗时选择最优结果。
+5. 将日志、阶段状态和最终结果统一打包。
+
+## 2. 当前目录与职责
 
 ### 2.1 入口层
 
-入口在 [main.py](../main.py#L10)。它负责加载环境变量、解析 CLI 参数、封装成 `PipelineRequest` 和 `PipelineConfig`，最后交给 `PipelineRunner` 执行。这个层本身不做业务判断，只是把命令行输入转换成统一请求对象。
+- [main.py](../main.py#L1)
+
+职责：
+
+- 加载 `.env`
+- 解析 CLI 参数
+- 生成 `PipelineConfig`
+- 构造 `PipelineRequest`
+- 调用 `PipelineRunner`
+- 输出最终 `PipelineResult`
 
 ### 2.2 编排层
 
-编排核心在 [pipeline/runner.py](../pipeline/runner.py#L8)。`PipelineRunner.run()` 以串行方式驱动整条流水线，按固定顺序调用 `research -> codegen -> optimizer -> executor -> evaluator -> package`。它还负责维护 `PipelineResult`、阶段状态、异常捕获和最终返回码语义。
+- [pipeline/runner.py](../pipeline/runner.py#L1)
 
-### 2.3 状态与目录层
+职责：
 
-[pipeline/context.py](../pipeline/context.py#L45) 负责 run 级别的目录结构、事件日志和阶段记录。`PipelineContext` 会创建 `run_dir`、`original/`、`generated/`、`result/`、`artifacts/`，并把阶段状态与最终结果汇总到 `report.json`。
+- 决定运行参数与执行策略
+- 严格按阶段顺序推进
+- 维护 `PipelineResult`
+- 记录阶段开始/结束
+- 捕获异常并保证 `package_stage` 落盘
+
+### 2.3 运行上下文层
+
+- [pipeline/context.py](../pipeline/context.py#L1)
+
+职责：
+
+- 生成 `run_id` / `session_id`
+- 创建 `output/<run_id>/` 目录结构
+- 写 `events.jsonl`
+- 写阶段检查点 `report.json`
+- 提供 `copy_input_image()` / `write_json()` 等上下文能力
+- 维护 `stage_records` 与运行期 `artifacts`
 
 ### 2.4 数据模型层
 
-[pipeline/models.py](../pipeline/models.py#L9) 定义了系统中的主要数据契约：`PipelineRequest`、`PipelineConfig`、`ResearchResult`、`GeneratedAlgorithmArtifact`、`ExecutionResult`、`QualityReport`、`StageRecord` 和 `PipelineResult`。这些结构是整个项目在“研究结果 -> 代码生成 -> 执行结果 -> 评估报告 -> report”链路中的数据骨架。
+- [pipeline/models.py](../pipeline/models.py#L1)
+
+职责：
+
+- 定义系统配置与数据契约
+- 承载跨阶段传递的结果对象
+- 统一序列化输出结构
+
+关键模型：
+
+- `PipelineConfig`
+- `PipelineRequest`
+- `ResearchResult`
+- `GeneratedAlgorithmArtifact`
+- `OptimizedArtifact`
+- `ExecutionResult`
+- `QualityReport`
+- `PipelineResult`
+- `StageRecord`
 
 ### 2.5 阶段实现层
 
-真正的业务逻辑集中在 [pipeline/stages.py](../pipeline/stages.py#L260)。其中：
+目录：
 
-- `research_stage()` 调 OpenRouter 和可选 Tavily，生成结构化候选方法。
-- `codegen_stage()` 调 OpenRouter 生成单文件 Python 算法，并做语法、签名、导入约束和子进程契约验证。
-- `optimize_stage()` 通过配置的优化器模块对生成代码做原地改写。
-- `execution_stage()` 用子进程运行算法文件，产出最终图片。
-- `evaluate_stage()` 比较输入图和输出图，计算 PSNR、SSIM、延迟和综合评分。
-- `package_stage()` 将结果写入 `report.json`。
+- [pipeline/stages/research.py](../pipeline/stages/research.py#L1)
+- [pipeline/stages/codegen.py](../pipeline/stages/codegen.py#L1)
+- [pipeline/stages/optimize.py](../pipeline/stages/optimize.py#L1)
+- [pipeline/stages/execute.py](../pipeline/stages/execute.py#L1)
+- [pipeline/stages/evaluate.py](../pipeline/stages/evaluate.py#L1)
+- [pipeline/stages/select.py](../pipeline/stages/select.py#L1)
+- [pipeline/stages/package.py](../pipeline/stages/package.py#L1)
+- [pipeline/stages/common.py](../pipeline/stages/common.py#L1)
 
-### 2.6 外部优化器层
+说明：
 
-`optimizers/autoresearch.py` 是一个“外部实验适配器”。它不直接属于主流水线核心，但会被 `OptimizerAdapter` 动态导入并执行。它的作用是把主流水线生成的算法文件交给外部脚本/实验协议继续迭代。
+旧的 `pipeline/stages.py` 已被拆分为 `pipeline/stages/` 包。当前真实实现以拆分后的模块为准。
 
-### 2.7 评估实验层
+### 2.6 韧性与重试层
 
-[optimizers/data/prepare.py](../optimizers/data/prepare.py#L1) 提供了另一个独立的评估脚本，定义了 MSE、PSNR、MAE 等指标。它更像实验协议的一部分，而不是主流水线真正使用的评估器。
+- [pipeline/resilience.py](../pipeline/resilience.py#L1)
 
-## 3. 端到端业务流程
+职责：
 
-### 3.1 输入阶段
+- 统一 LLM / HTTP 重试策略
+- 区分 retryable / non-retryable 异常
+- 记录 retry 事件
 
-用户执行 [main.py](../main.py#L10) 后，必须提供 `--image-path` 和 `--scene-prompt`。其余参数主要影响输出目录、超时、内存限制和优化器插件选择。
+### 2.7 外部工具与适配层
 
-### 3.2 研究阶段
+- [optimizers/autoresearch.py](../optimizers/autoresearch.py#L1)
+- [tools/web_search.py](../tools/web_search.py#L1)
 
-`PipelineRunner` 先调用 [pipeline/runner.py](../pipeline/runner.py#L17) 中的 `research_stage()`。这个阶段会：
+说明：
 
-- 读取环境变量中的 `OPENROUTER_API_KEY` 和 `OPENROUTER_MODEL`。
-- 如果存在 `TAVILY_API_KEY`，先抓取 web 线索。
-- 将场景描述和 web 线索拼装成研究提示词。
-- 让模型输出 JSON 结构的候选方法。
-- 把研究结果写入 `research.json` 和 `research_web_clues.json`。
+- `optimizers/autoresearch.py` 是默认外部优化器适配层。
+- `tools/web_search.py` 属于工具侧封装，不是当前主流水线的直接入口。
 
-### 3.3 代码生成阶段
+## 3. 运行模式
 
-研究结果进入 `codegen_stage()` 后，会生成一个单文件 Python 算法。该阶段除了调用模型，还会做几层约束：
+调用路径：
 
-- 语法解析，确保源码可被 `ast.parse()` 接受。
-- 入口签名检查，要求 `run(image_path, output_path, scene_prompt)`。
-- 导入白名单检查，只允许标准库和少量图像处理库。
-- 子进程契约验证，要求脚本能在命令行被运行并写出输出图。
+`PipelineRunner.run()` -> `_run()`
 
-通过后，算法源文件会写入 `generated/` 或外部指定目录，并生成 `codegen.json`。
+阶段顺序：
 
-### 3.4 优化阶段
+1. `research`
+2. `codegen`
+3. `optimizer`
+4. `executor`
+5. `evaluator`
+6. `package`
 
-优化阶段由 `OptimizerAdapter` 接管。若配置了 `--optimizer-module`，系统会动态导入该模块并调用 `optimize(algo_file_path, user_prompt, user_image_file_path)`。默认配置指向 `optimizers.autoresearch`，它会基于 `program.md` 协议启动外部实验脚本，对算法文件做进一步尝试。
 
-### 3.5 执行阶段
+## 4. 端到端调用链
 
-`execution_stage()` 会用 `sys.executable` 子进程运行生成的算法文件，把 `--image-path`、`--output-path`、`--scene-prompt` 传给算法脚本。它同时支持超时和 POSIX 下的内存限制，并把 stdout、stderr、返回码和输出图路径写入 `execution.json`。
+完整入口链路：
 
-### 3.6 评估阶段
+`main.py`
+-> `PipelineConfig.from_args()`
+-> `PipelineRequest(...)`
+-> `PipelineRunner.run()`
+-> `PipelineContext.create()`
+-> `PipelineContext.copy_input_image()`
+-> `research_stage()`
+-> `codegen_stage()`
+-> `optimize_stage()`
+-> `execution_stage()`
+-> `evaluate_stage()`
+-> `select_best_result()`
+-> `package_stage()`
 
-`evaluate_stage()` 会把输入图和输出图转成 RGB 数组，计算 PSNR、SSIM 和延迟，再按固定公式折算成综合分数，最后写入 `quality.json`。
+## 5. 分阶段业务逻辑
 
-### 3.7 打包阶段
+## 5.1 Research
 
-最后，`package_stage()` 把 `PipelineResult.to_dict()` 写入 `report.json`，并把所有阶段记录、错误信息、执行结果和质量结果固化下来。这个文件是外部排障和审计的主入口。
+文件：
 
-## 4. 调用链总览
+- [pipeline/stages/research.py](../pipeline/stages/research.py#L1)
 
-一次完整运行的控制链路如下：
+输入：
 
-`main.py` -> `PipelineRunner.run()` -> `PipelineContext.create()` -> `copy_input_image()` -> `research_stage()` -> `codegen_stage()` -> `optimize_stage()` -> `execution_stage()` -> `evaluate_stage()` -> `package_stage()`
+- `context.request.scene_prompt`
+- 可选 Tavily Web 检索结果
 
-其中，`PipelineContext` 负责目录、事件日志和阶段记录，`PipelineRunner` 负责顺序和异常语义，`stages.py` 负责所有业务动作，`models.py` 负责结果结构。
+逻辑：
 
-## 5. 关键产物
+1. 如果存在 `TAVILY_API_KEY`，先检索 Web clue。
+2. 如果 `bypass_autoresearch=True`，直接走本地启发式 `_build_local_research_result()`。
+3. 否则调用 OpenRouter 输出结构化候选。
+4. 写出 `research.json` 和 `research_web_clues.json`。
 
-一次成功运行会生成这些关键产物：
+当前默认行为：
 
-- `original/`：输入图片副本。
-- `generated/`：生成的算法源码。
-- `artifacts/`：优化快照、代码生成验证文件等中间物。
-- `events.jsonl`：事件日志。
-- `execution.json`：执行结果。
-- `quality.json`：评估结果。
-- `report.json`：最终汇总结果（含阶段记录）。
+- 默认 `bypass_autoresearch=True`
+- 默认会生成若干本地候选
 
-## 6. 目前可确认的缺陷和 bug
+## 5.2 Codegen
 
-### 6.1 打包阶段的成功状态早于真实写盘
+文件：
 
-在 [pipeline/runner.py](../pipeline/runner.py#L52) 里，`package` 阶段先被标记为 `succeeded`，随后才调用 `package_stage()` 写 `report.json`。如果真正写盘时出错，异常会落到 `except` 分支，但 `current_stage` 仍然停留在 `evaluator`，导致包装失败被错误归因到评估阶段，而不是 package 阶段。这个问题会让失败日志和阶段状态都失真。
+- [pipeline/stages/codegen.py](../pipeline/stages/codegen.py#L1)
 
-### 6.2 外部优化器失败不会被显式感知
+输入：
 
-在 [optimizers/autoresearch.py](../optimizers/autoresearch.py#L46) 中，`subprocess.run()` 的返回码没有被检查，`start_experiment()` 最终总是返回 `train_file_path`。这意味着外部实验脚本即使失败、超时或中途报错，只要没有抛异常到 Python 层，主流水线也很难感知优化器其实没成功。
+- `ResearchResult`
+- Web clue 上下文
 
-### 6.3 代码生成契约验证过于宽松
+逻辑：
 
-[pipeline/stages.py](../pipeline/stages.py#L221) 的 `_verify_generated_algorithm_contract()` 只检查“子进程是否退出 0”和“是否产生输出文件”，但没有验证 `run()` 的返回值结构，也没有检查命令行输出是否符合预期。再加上 [prompts.py](../prompts.py#L44) 里写明 `run()` 应该返回字典，这里实际上存在契约与验证不一致的问题。结果是一些“能跑但不符合约定”的算法也可能被误判为合格。
+1. 根据候选方法生成算法文件路径。
+2. 如果 `bypass_autoresearch=True`，直接走本地确定性模板生成。
+3. 否则调用 OpenRouter 生成算法源码。
+4. 校验：
+   - Python 语法
+   - `run(image_path, output_path, scene_prompt)` 签名
+   - allowed imports
+   - CLI 契约可执行
+5. 生成可选 `prepare.py`
+6. 写入 `codegen.json`，用于记录生成的算法信息。
 
-### 6.4 评估目标与优化协议存在指标漂移
+## 5.3 Optimize
 
-[pipeline/stages.py](../pipeline/stages.py#L526) 的主流水线评估使用 PSNR、SSIM 和延迟综合分，而 [optimizers/data/prepare.py](../optimizers/data/prepare.py#L1) 只定义了 MSE、PSNR、MAE。也就是说，外部优化实验如果依赖 `prepare.py`，它优化的目标和主流水线最终考核的目标并不一致，会造成“实验看起来变好，但主流程评分不升”的现象。
+文件：
 
-### 6.5 算法生成后立即执行，缺少更强的失败隔离
+- [pipeline/stages/optimize.py](../pipeline/stages/optimize.py#L1)
 
-[pipeline/stages.py](../pipeline/stages.py#L315) 的 codegen 只做了语法、导入和最小契约验证，然后就进入执行阶段。这里没有对 `run()` 返回值结构、图像模式、尺寸、异常类型做更严格的约束，因此“生成代码可执行”并不等于“生成代码对业务目标有效”。这不是单点错误，但会显著增加后续执行与评估阶段的噪声。
+输入：
 
-## 7. 总结
+- 生成的算法文件
+- 用户 prompt
+- 输入图路径
 
-从架构上看，这个项目已经形成了比较清晰的分层：入口层、编排层、状态层、阶段层、外部优化层和评估层都已具备。真正的核心控制点在 [pipeline/runner.py](../pipeline/runner.py#L8) 和 [pipeline/stages.py](../pipeline/stages.py#L260)，而输出的审计能力主要依赖 [pipeline/context.py](../pipeline/context.py#L45) 的目录与日志约定。
+逻辑：
 
-当前最值得优先修的不是“再加一个功能”，而是先把两个闭环补牢：一是 package 阶段的错误归因和落盘顺序，二是优化器与代码生成契约的失败可见性。把这两点修好后，整条流水线的可观测性和可调试性会明显提升。
+1. 通过 `OptimizerAdapter` 动态加载优化器。
+2. 调用优化协议 `optimize(...)`。
+3. 对优化前后源码做 hash 比较。
+4. 如果修改过，保存 `.optimized.py` 快照。
+5. 如果优化器抛异常：
+   - 恢复优化前源码
+   - 回退到先前可执行版本
+   - 根据 `continue_on_optimizer_failure` 决定继续还是中止
+
+说明：
+
+- `OptimizedArtifact.optimizer_success` 用于显式标记优化器是否成功。
+
+## 5.4 Execute
+
+文件：
+
+- [pipeline/stages/execute.py](../pipeline/stages/execute.py#L1)
+
+逻辑：
+
+1. 用 `sys.executable` 子进程运行算法脚本。
+2. 将输入图、副产物输出路径、scene prompt 作为 CLI 参数传入。
+3. 执行超时取自 `context.config.executor_timeout_seconds`。
+4. 可选内存限制取自 `context.config.max_memory_mb`。
+5. 产出 `ExecutionResult`。
+
+工件：
+
+- `execution.json`
+
+## 5.5 Evaluate
+
+文件：
+
+- [pipeline/stages/evaluate.py](../pipeline/stages/evaluate.py#L1)
+
+逻辑：
+
+1. 打开输入图与输出图。
+2. 根据 `scene_prompt` 推导任务目标图：
+   - 裁剪任务：构造中心裁剪目标
+   - 放大任务：构造 resize 后目标
+   - 其他任务：默认以原图为目标
+3. 计算 `PSNR`、`SSIM`、`latency`
+4. 生成综合 `score`
+5. 在多候选场景下按候选索引和 `QualityReport` 汇总结果
+
+说明：
+
+评估逻辑已经从“输出越像输入越好”升级为“尽量贴合推断出的任务目标”，以避免裁剪类任务在选优时被误伤。
+
+## 5.6 Select Best Result
+
+文件：
+
+- [pipeline/stages/select.py](../pipeline/stages/select.py#L1)
+
+支持策略：
+
+- `best_score`
+- `highest_confidence`
+- `first_success`
+
+逻辑：
+
+- `best_score`：选最高评分
+- `highest_confidence`：优先置信度最高且执行成功的候选
+- `first_success`：按候选顺序选第一个执行成功的结果
+
+## 5.7 Package
+
+文件：
+
+- [pipeline/stages/package.py](../pipeline/stages/package.py#L1)
+
+逻辑：
+
+1. 汇总 `PipelineResult.to_dict()`
+2. 写入 `report.json`
+3. 保证失败路径也会执行打包
+
+当前实现中，`package_stage()` 的调用时序已调整为“先真实写盘，再标记 package 成功”。
+
+## 6. 输出工件布局
+
+运行目录结构：
+
+```text
+output/
+  latest -> run_xxx
+  run_xxx/
+    original/
+    generated/
+    result/
+    artifacts/
+    events.jsonl
+    report.json
+    research.json
+    research_web_clues.json
+    codegen.json
+    optimize.json
+    execution.json
+    quality.json
+```
+
+说明：
+
+- `report.json` 是最终汇总入口。
+- `events.jsonl` 是逐事件日志。
+- `generated/` 下保留生成脚本与 `.optimized.py` 快照。
+- `result/` 下保留算法输出图片。
+
+## 7. 关键契约
+
+### 7.1 生成算法契约
+
+必须提供：
+
+```python
+def run(image_path: str, output_path: str, scene_prompt: str) -> dict:
+    ...
+```
+
+同时必须支持 CLI：
+
+```bash
+python algo.py --image-path ... --output-path ... --scene-prompt ...
+```
+
+### 7.2 优化器契约
+
+当前优化协议：
+
+```python
+def optimize(
+    algo_file_path: str,
+    user_prompt: str,
+    user_image_file_path: str,
+    prepare_file_path: str | None = None,
+) -> None:
+    ...
+```
+
+### 7.3 阶段状态契约
+
+阶段名固定为：
+
+- `research`
+- `codegen`
+- `optimizer`
+- `executor`
+- `evaluator`
+- `package`
+
+阶段状态固定为：
+
+- `pending`
+- `running`
+- `succeeded`
+- `failed`
+- `skipped`
+
+## 8. 配置来源
+
+配置定义：
+
+- [pipeline/models.py](../pipeline/models.py#L48)
+
+CLI 参数来源：
+
+- [main.py](../main.py#L13)
+
+当前可配置项包括：
+
+- `bypass_autoresearch`
+- `selection_strategy`
+- `continue_on_optimizer_failure`
+- `optimizer_module`
+- `optimizer_function`
+- `llm_max_retries`
+- `http_max_retries`
+- `retry_initial_delay`
+- `retry_max_delay`
+- `retry_jitter`
+- `llm_timeout_seconds`
+- `http_timeout_seconds`
+- `executor_timeout_seconds`
+- `executor_retry_once`
+- `max_memory_mb`
+
+其中部分参数目前未暴露到 CLI，但已经在 `PipelineConfig` 和 `PipelineContext` 中打通。
+
+## 9. 当前实现特征
+
+### 9.1 默认行为偏稳态
+
+- 默认 `bypass_autoresearch = True`
+- 默认 `selection_strategy = best_score`
+
+这意味着当前默认行为是：
+
+1. 研究阶段可检索 Web，但候选方案默认本地生成
+2. 代码生成默认走本地确定性模板
+3. 优化阶段默认跳过外部 autoresearch
+4. 按候选执行、评估、选优和打包
+
+### 9.2 旧兼容层仍存在
+
+根目录下仍然保留：
+
+- `runner.py`
+- `context.py`
+- `stages.py`
+
+这些文件更接近旧实现或兼容层。当前主入口链路以 `pipeline/` 包为准。
+
+## 10. 建议阅读顺序
+
+如果要快速理解当前项目，建议按这个顺序读：
+
+1. [README.md](../README.md)
+2. [main.py](../main.py#L1)
+3. [pipeline/models.py](../pipeline/models.py#L1)
+4. [pipeline/context.py](../pipeline/context.py#L1)
+5. [pipeline/runner.py](../pipeline/runner.py#L1)
+6. `pipeline/stages/` 下各阶段实现
+7. [pipeline/resilience.py](../pipeline/resilience.py#L1)
+8. [optimizers/autoresearch.py](../optimizers/autoresearch.py#L1)
