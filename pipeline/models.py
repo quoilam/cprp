@@ -21,11 +21,7 @@ DEFAULT_OPTIMIZER_MODULE = "optimizers.autoresearch"
 DEFAULT_OPTIMIZER_FUNCTION = "optimize"
 DEFAULT_CONTINUE_ON_OPTIMIZER_FAILURE = False
 DEFAULT_MAX_MEMORY_MB: int | None = None
-
-# Multi-branch pipeline configuration
-DEFAULT_MAX_BRANCHES = 2  # Maximum number of candidates to generate code for
 DEFAULT_BYPASS_AUTORESEARCH = True  # Bypass the time-consuming autoresearch by default
-DEFAULT_SELECTION_STRATEGY = "best_score"  # How to select among branches: "best_score" | "highest_confidence" | "first_success"
 
 
 class StageStatus(str, Enum):
@@ -48,9 +44,7 @@ class StageName(str, Enum):
 @dataclass(slots=True)
 class PipelineConfig:
     """Configuration for the pipeline behavior."""
-    max_branches: int = DEFAULT_MAX_BRANCHES
     bypass_autoresearch: bool = DEFAULT_BYPASS_AUTORESEARCH
-    selection_strategy: str = DEFAULT_SELECTION_STRATEGY  # "best_score" | "highest_confidence" | "first_success"
     optimizer_module: str = DEFAULT_OPTIMIZER_MODULE
     optimizer_function: str = DEFAULT_OPTIMIZER_FUNCTION
     continue_on_optimizer_failure: bool = DEFAULT_CONTINUE_ON_OPTIMIZER_FAILURE
@@ -69,7 +63,7 @@ class PipelineConfig:
     def from_args(cls, **overrides: Any) -> "PipelineConfig":
         """Create a config, overriding specific fields from kwargs."""
         fields = {
-            "max_branches", "bypass_autoresearch", "selection_strategy",
+            "bypass_autoresearch",
             "optimizer_module", "optimizer_function", "continue_on_optimizer_failure",
             "llm_max_retries", "http_max_retries",
             "retry_initial_delay", "retry_max_delay", "retry_jitter",
@@ -84,9 +78,7 @@ class PipelineConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "max_branches": self.max_branches,
             "bypass_autoresearch": self.bypass_autoresearch,
-            "selection_strategy": self.selection_strategy,
             "optimizer_module": self.optimizer_module,
             "optimizer_function": self.optimizer_function,
             "continue_on_optimizer_failure": self.continue_on_optimizer_failure,
@@ -154,9 +146,6 @@ class GeneratedAlgorithmArtifact:
     source_hash: str
     strategy_name: str
     syntax_validated: bool = False
-    # Multi-branch tracking: which candidate from research this code was generated from
-    candidate_index: int = 0
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
@@ -164,7 +153,6 @@ class GeneratedAlgorithmArtifact:
             "source_hash": self.source_hash,
             "strategy_name": self.strategy_name,
             "syntax_validated": self.syntax_validated,
-            "candidate_index": self.candidate_index,
         }
 
 
@@ -174,57 +162,25 @@ class OptimizedArtifact:
     original_path: Path
     optimized_path: Path
     strategy_name: str
-    candidate_index: int = 0
     changed: bool = False
     snapshot_path: Path | None = None
     # Store before/after hashes for comparison
     before_hash: str = ""
     after_hash: str = ""
+    optimizer_success: bool = True
+    error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "original_path": str(self.original_path),
             "optimized_path": str(self.optimized_path),
             "strategy_name": self.strategy_name,
-            "candidate_index": self.candidate_index,
             "changed": self.changed,
             "snapshot_path": str(self.snapshot_path) if self.snapshot_path else None,
             "before_hash": self.before_hash,
             "after_hash": self.after_hash,
-        }
-
-
-@dataclass(slots=True)
-class CodegenBranchResult:
-    """Result of a single code generation branch."""
-    candidate: CandidateMethod
-    artifact: GeneratedAlgorithmArtifact
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "candidate": {
-                "name": self.candidate.name,
-                "confidence": self.candidate.confidence,
-                "description": self.candidate.description,
-            },
-            "artifact": self.artifact.to_dict(),
-        }
-
-
-@dataclass(slots=True)
-class ExecutionBranchResult:
-    """Execution result with branch context."""
-    execution_result: ExecutionResult
-    strategy_name: str
-    candidate_index: int
-    optimized: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "execution_result": self.execution_result.to_dict(),
-            "strategy_name": self.strategy_name,
-            "candidate_index": self.candidate_index,
-            "optimized": self.optimized,
+            "optimizer_success": self.optimizer_success,
+            "error_message": self.error_message,
         }
 
 
@@ -291,19 +247,9 @@ class PipelineResult:
     run_id: str
     request: PipelineRequest
     research_result: ResearchResult | None = None
-    # Single-branch (legacy) support
     algorithm_artifact: GeneratedAlgorithmArtifact | None = None
     execution_result: ExecutionResult | None = None
     quality_report: QualityReport | None = None
-    # Multi-branch support
-    codegen_branches: list[CodegenBranchResult] = field(default_factory=list)
-    optimized_branches: list[OptimizedArtifact] = field(default_factory=list)
-    execution_branches: list[ExecutionBranchResult] = field(default_factory=list)
-    quality_branches: list[tuple[int, QualityReport]] = field(default_factory=list)  # (candidate_index, report)
-    # Final selected branch info
-    selected_branch_index: int | None = None
-    selected_strategy_name: str | None = None
-    selected_output_image: Path | None = None
     # General
     stage_records: list[StageRecord] = field(default_factory=list)
     manifest_path: Path | None = None
@@ -324,35 +270,10 @@ class PipelineResult:
             "algorithm_artifact": self.algorithm_artifact.to_dict() if self.algorithm_artifact else None,
             "execution_result": self.execution_result.to_dict() if self.execution_result else None,
             "quality_report": self.quality_report.to_dict() if self.quality_report else None,
-            "codegen_branches": [b.to_dict() for b in self.codegen_branches],
-            "optimized_branches": [b.to_dict() for b in self.optimized_branches],
-            "execution_branches": [b.to_dict() for b in self.execution_branches],
-            "quality_branches": [
-                {"candidate_index": idx, "report": report.to_dict()}
-                for idx, report in self.quality_branches
-            ],
-            "selected_branch_index": self.selected_branch_index,
-            "selected_strategy_name": self.selected_strategy_name,
-            "selected_output_image": str(self.selected_output_image) if self.selected_output_image else None,
             "stage_records": [record.to_dict() for record in self.stage_records],
             "manifest_path": str(self.manifest_path) if self.manifest_path else None,
             "error_code": self.error_code,
             "error_message": self.error_message,
             "config": self.config.to_dict() if self.config else None,
             "success": self.success,
-        }
-
-
-@dataclass(slots=True)
-class BranchComparisonReport:
-    """Report comparing all branches."""
-    branches: list[dict[str, Any]] = field(default_factory=list)
-    selection_reason: str = ""
-    selection_criteria: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "branches": self.branches,
-            "selection_reason": self.selection_reason,
-            "selection_criteria": self.selection_criteria,
         }

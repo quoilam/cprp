@@ -9,7 +9,7 @@ import json
 import shutil
 import uuid
 
-from .models import DEFAULT_OUTPUT_ROOT, DEFAULT_SESSION_ID, PipelineRequest, StageName, StageRecord, StageStatus
+from .models import DEFAULT_OUTPUT_ROOT, DEFAULT_SESSION_ID, PipelineConfig, PipelineRequest, StageName, StageRecord, StageStatus
 
 
 # ---------- 工具函数 ----------
@@ -120,6 +120,7 @@ class PipelinePaths:
 @dataclass(slots=True)
 class PipelineContext:
     request: PipelineRequest
+    config: PipelineConfig
     session_id: str
     run_id: str
     paths: PipelinePaths
@@ -130,17 +131,19 @@ class PipelineContext:
         default_factory=dict, init=False)
 
     @classmethod
-    def create(cls, request: PipelineRequest) -> "PipelineContext":
+    def create(cls, request: PipelineRequest, config: PipelineConfig | None = None) -> "PipelineContext":
+        effective_config = config or PipelineConfig()
         session_id = DEFAULT_SESSION_ID or make_session_id()
         run_id = make_run_id(request.scene_prompt)
         paths = PipelinePaths.create(DEFAULT_OUTPUT_ROOT, run_id)
-        context = cls(request=request, session_id=session_id,
+        context = cls(request=request, config=effective_config, session_id=session_id,
                       run_id=run_id, paths=paths)
         context.metadata["created_at"] = _utc_now()
         context.metadata["session_id"] = session_id
+        context.metadata["config"] = effective_config.to_dict()
         # 仅写入日志文件，不打印到控制台（由美化方法接管）
         context._write_event_log("pipeline", "created", {
-                                 "session_id": session_id, "run_id": run_id})
+                                 "session_id": session_id, "run_id": run_id, "config": effective_config.to_dict()})
         return context
 
     # ---------- 内部日志写入（保留原功能，供审计） ----------
